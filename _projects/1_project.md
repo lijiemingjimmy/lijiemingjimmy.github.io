@@ -1,19 +1,17 @@
 ---
 layout: page
-title: Robotic Manipulation and Simulation Training
-description: Learning-based robotics, manipulation, and simulation-to-real questions.
+title: CVPR 2026 Workshop Submission
+description: Submission to the CVPR 2026 3D-LLM-VLA Workshop.
 importance: 1
 category: research
 ---
 
-I am interested in how robots can learn reliable manipulation policies from data, simulation, and interaction.
-This direction connects learning-based robotics, imitation learning, reinforcement learning, and simulation-based training.
+This project is a submission to the **CVPR 2026 3D-LLM-VLA Workshop**.
 
-Questions I am currently thinking about include:
+OpenReview: [https://openreview.net/forum?id=vpzo1dW0Zm](https://openreview.net/forum?id=vpzo1dW0Zm)
 
-- How can simulated experience transfer to real physical interaction?
-- What should a robot policy represent beyond visual appearance?
-- Where do imitation learning and reinforcement learning fail when assumptions about the environment change?
-- How can vision-language-action models connect high-level instructions with low-level control?
+The work sits in my broader interest area around embodied intelligence, 3D understanding,
+vision-language-action models, and agents that can reason about and interact with the physical world.
 
-This project page is a placeholder for future notes, reproductions, and small systems related to robotic manipulation.
+I keep this page as a public pointer to the OpenReview record. I may add a more detailed project summary,
+code link, or notes after the review/public release status is settled.

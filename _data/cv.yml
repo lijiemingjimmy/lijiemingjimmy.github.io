@@ -38,24 +38,25 @@ cv:
         keywords: "model deployment, inference acceleration, reproduction, engineering complete systems"
 
     Projects:
-      - name: Robotic Manipulation and Simulation-Based Training
+      - name: CVPR 2026 3D-LLM-VLA Workshop Submission
         summary: >
-          Study and implementation around learning-based robotic manipulation, with interest in
-          how simulation, imitation learning, and reinforcement learning can transfer into reliable
-          physical interaction.
+          Submission to the CVPR 2026 3D-LLM-VLA Workshop, connected to embodied intelligence,
+          3D understanding, and vision-language-action models.
+        url: https://openreview.net/forum?id=vpzo1dW0Zm
         highlights:
-          - Robot learning
-          - Simulation-based training
-          - Manipulation
+          - CVPR 2026 workshop
+          - 3D-LLM-VLA
+          - Embodied AI
 
-      - name: World-Model-Based Video Generation
+      - name: CoRL Submission
         summary: >
-          Exploration of generative models that predict physically meaningful future states, with
-          video generation as a route toward physical reasoning and planning.
+          Submission to CoRL, aligned with my interests in robot learning, embodied agents,
+          and reliable physical interaction.
+        url: https://openreview.net/forum?id=3Jpz2z9MIZ
         highlights:
-          - Video generation
-          - Physical reasoning
-          - World models
+          - CoRL
+          - Robot learning
+          - Embodied AI
 
       - name: AI-Assisted Academic Writing
         summary: >

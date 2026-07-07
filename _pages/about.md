@@ -6,8 +6,8 @@ subtitle: Undergraduate student in Computer Science and Technology at Tsinghua U
 
 profile:
   align: right
-  image: jieming_profile.png
-  image_circular: true # crops the image to make it circular
+  image: profile.jpg
+  image_circular: false # crops the image to make it circular
   more_info: >
     <p>Beijing, China</p>
     <p>Tsinghua University</p>

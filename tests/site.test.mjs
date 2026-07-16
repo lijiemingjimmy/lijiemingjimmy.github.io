@@ -53,6 +53,16 @@ test("HTML contains four navigable views and comprehensive profile content", asy
   assert.doesNotMatch(html, /hello@example\.com/);
 });
 
+test("homepage uses the requested Jimmy branding and portrait", async () => {
+  const html = await read("index.html");
+  assert.match(html, /lijiemingjimmy\.github\.io/);
+  assert.match(html, /Welcome to Jimmy's homepage/);
+  assert.match(html, /assets\/images\/profile\.jpg/);
+  assert.doesNotMatch(html, /class=["']brand["']/);
+  assert.doesNotMatch(html, /Learning how the world changes/);
+  assert.doesNotMatch(html, /Jieming\.li · Embodied intelligence/);
+});
+
 test("CSS provides view routing, publication rows, responsiveness and accessibility", async () => {
   const css = await read("assets/styles.css");
   assert.match(css, /\.view\[hidden\]/);

@@ -206,3 +206,5 @@ main, .site-footer { width: min(calc(100% - 48px), var(--content)); margin: 0 au
 @media (max-width: 720px) {
   .info-sidebar .portrait { grid-row: 1 / 4; }
 }
+
+.blog-notes { margin-top: 60px; }

@@ -1,4 +1,4 @@
-import { setupNotes } from "./notes.js";
+import { setupNotes } from "./notes.js?v=20261101-blog";
 
 export const siteData = {
   "news": [
@@ -14,6 +14,26 @@ export const siteData = {
     }
   ],
   "research": [
+    {
+      "id": "rethinking-robot-agent-evaluation",
+      "date": "2026",
+      "status": "OpenRUA · RUA-Eval",
+      "title": "Rethinking Robot Agent Evaluation",
+      "authors": "OpenRUA team",
+      "summary": "Examining how execution budgets, verifier feedback, and task-specific skill development affect robot agent evaluation, with a focus on comparable results and transfer beyond the development task.",
+      "image": "assets/images/rethinking-evaluation.png",
+      "imageAlt": "Rethinking evaluation: unfair budget, verifier leak, and task overfitting",
+      "links": [
+        {
+          "label": "Article",
+          "href": "https://openrua.ai/blog/RUAEval"
+        },
+        {
+          "label": "GitHub",
+          "href": "https://github.com/lijiemingjimmy/RUA-Eval"
+        }
+      ]
+    },
     {
       "id": "aaarena",
       "date": "2026",
@@ -82,36 +102,16 @@ export const siteData = {
         "项目以 Rust 构建核心 Agent，结合写作阶段记忆、课程资料检索与可追溯的运行过程，并提供学生对话界面和教师教学工作台。防代写机制让引导始终围绕学生自己的思考与修改展开。",
         "从一次困惑出发，看看几轮对话能把你的想法带到哪里。可联系作者微信 li-jm25 获得体验权限。"
       ]
-    },
-    {
-      "slug": "rua-eval",
-      "externalUrl": "https://openrua.ai/blog/RUAEval",
-      "date": "2026",
-      "category": "Research Notes",
-      "title": "RUA-Eval",
-      "summary": "Read the OpenRUA team’s blog on RUA-Eval.",
-      "tags": [
-        "OpenRUA",
-        "Embodied AI",
-        "Evaluation"
-      ],
-      "links": [
-        {
-          "label": "Read on OpenRUA",
-          "href": "https://openrua.ai/blog/RUAEval"
-        }
-      ],
-      "body": [
-        "RUA-Eval · OpenRUA team. Read the full article on the OpenRUA website using the link above."
-      ]
     }
   ]
 };
 
-const topLevelViews = new Set(["main", "info", "research", "blog", "notes"]);
+const topLevelViews = new Set(["main", "info", "research", "blog"]);
 
 export function normalizeRoute(hash = "") {
   const route = hash.replace(/^#\/?/, "").replace(/\/$/, "");
+  if (route === "notes") return { view: "blog", slug: null };
+  if (route === "blog/rua-eval") return { view: "research", slug: null };
   if (route.startsWith("blog/")) {
     const slug = route.slice(5).trim();
     if (slug) return { view: "article", slug };

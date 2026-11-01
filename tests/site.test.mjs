@@ -18,9 +18,9 @@ test("normalizes top-level and blog article routes", () => {
 
 test("filters blog posts without mutating the source collection", () => {
   const original = [...siteData.posts];
-  const research = getFilteredPosts(siteData.posts, "Research Notes");
+  const research = getFilteredPosts(siteData.posts, "Writing & Education");
   assert.ok(research.length > 0);
-  assert.ok(research.every((post) => post.category === "Research Notes"));
+  assert.ok(research.every((post) => post.category === "Writing & Education"));
   assert.deepEqual(siteData.posts, original);
 });
 
@@ -40,9 +40,9 @@ test("publishes accurate research and news metadata", () => {
   });
 });
 
-test("HTML contains five navigable views and comprehensive profile content", async () => {
+test("HTML contains four navigable views and comprehensive profile content", async () => {
   const html = await read("index.html");
-  for (const view of ["main", "info", "research", "blog", "notes", "article"]) {
+  for (const view of ["main", "info", "research", "blog", "article"]) {
     assert.match(html, new RegExp(`data-view=["']${view}["']`));
   }
   assert.match(html, /Department of Electronic Engineering/);

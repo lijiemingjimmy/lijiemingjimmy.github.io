@@ -1,0 +1,33 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AlphaEvolve 论文解读：把程序修改接入可验证的进化搜索 · Jieming Li</title><link rel="stylesheet" href="../assets/styles.css"><link rel="stylesheet" href="../assets/notes.css"><link rel="stylesheet" href="vendor/katex/katex.min.css"></head><body class="note-page"><header class="note-nav"><a href="../index.html#notes">← Notes</a><a href="../index.html">Jieming Li</a></header><main class="note-layout"><aside class="note-outline"><p class="eyebrow">On this page</p><nav aria-label="目录"><ol><li><a href="#section-0">一、核心问题：怎样让探索持续积累</a></li><li><a href="#section-1">二、它与纯文本 RLVR 的区别</a></li><li><a href="#section-2">三、结果应该怎样阅读</a></li><li><a href="#section-3">四、怎样迁移到机器人 Self-Improving Agent</a></li></ol></nav></aside><article class="note-content" id="content"><p class="eyebrow">Research notebook · 研究笔记</p><h1 id="noteTitle">AlphaEvolve 论文解读：把程序修改接入可验证的进化搜索</h1>
+<p><strong>论文：</strong> AlphaEvolve: A Coding Agent for Scientific and Algorithmic Discovery<br>
+<strong>团队：</strong> Google DeepMind，Alexander Novikov、Ngân Vũ、Marvin Eisenberger 等<br>
+<strong>时间：</strong> 2025 年；arXiv 白皮书发布于 6 月 16 日<br>
+<strong>资源：</strong> <a href="https://arxiv.org/abs/2506.13131">论文</a> · <a href="https://arxiv.org/pdf/2506.13131">PDF</a> · <a href="https://github.com/google-deepmind/alphaevolve_results">官方结果与验证代码</a></p>
+<p><strong>一句话概括：AlphaEvolve 用 LLM 修改程序，用执行器评价候选结果，再通过进化式程序档案持续搜索，让一次生成变成可以积累成果的算法改进过程。</strong></p>
+<h2 id="section-0">一、核心问题：怎样让探索持续积累</h2>
+<p>如果每次都让模型从头回答同一个问题，计算主要花在重复采样。AlphaEvolve 将完整程序及其修改作为探索对象，让已经验证有效的候选程序成为下一轮改进的起点。</p>
+<p>系统中的主要循环可以概括为：</p>
+<figure class="diagram"><pre class="mermaid">flowchart LR
+    A[从程序档案选择候选与参考] --&gt; B[LLM 提出代码修改]
+    B --&gt; C[执行与自动评价]
+    C --&gt; D[将有价值的候选写入档案]
+    D --&gt; A
+</pre><details><summary>Diagram source</summary><pre>flowchart LR
+    A[从程序档案选择候选与参考] --&gt; B[LLM 提出代码修改]
+    B --&gt; C[执行与自动评价]
+    C --&gt; D[将有价值的候选写入档案]
+    D --&gt; A
+</pre></details></figure><p>评价器持续提供正确性与优化目标的反馈，程序档案保存值得继续探索的候选，使搜索能在历史结果上推进。<a href="https://arxiv.org/abs/2506.13131">来源：论文</a></p>
+<h2 id="section-1">二、它与纯文本 RLVR 的区别</h2>
+<p>RLVR 通常把生成轨迹及其结果奖励用于更新模型参数。AlphaEvolve 的主要闭环发生在系统层：修改程序、运行程序、保存候选，再继续修改。</p>
+<p>因此，即使底层模型参数没有变化，整个系统也可能通过搜索与可验证的中间成果，完成单次调用难以解决的任务。</p>
+<p>这提供了理解“自我改进”的另一个单位：需要同时观察模型参数、外部程序资产、搜索过程与评价器，而不是只比较训练前后两个 checkpoint。</p>
+<h2 id="section-2">三、结果应该怎样阅读</h2>
+<p>论文报告了算法发现、矩阵乘法与 Google 计算基础设施优化等应用。其价值在于候选程序可以被执行和检验，系统收益与具体算法产物相联系。<a href="https://arxiv.org/abs/2506.13131">来源：论文</a></p>
+<p>官方结果仓库提供论文中部分数学发现及其验证材料。它适合用于查看可验证产物，不能据此认定完整生产搜索系统已经公开。<a href="https://github.com/google-deepmind/alphaevolve_results">来源：官方仓库</a></p>
+<h2 id="section-3">四、怎样迁移到机器人 Self-Improving Agent</h2>
+<p>以下是应用推论。</p>
+<p>机器人系统可以把技能程序、恢复分支和感知处理代码视为可改进资产：从已验证技能出发提出修改，在训练布局上执行，将满足评价条件的候选加入技能库。</p>
+<p>要检验这类改进，需固定测试布局与 verifier，并记录每次候选修改消耗的执行次数、模型调用与运行时间。否则，新增成功实例可能来自更多测试机会，也可能来自针对测试实例的专门调整。</p>
+<p>与 <a href="Limit-of-RLVR.html">Limit of RLVR</a> 对照时，最重要的区分是：底层模型的有限采样能力与整个搜索系统的有效能力属于不同评价对象。AlphaEvolve 展示了围绕可执行产物组织探索的系统价值。</p>
+<footer><a href="../index.html#notes">← All notes</a></footer></article></main><script src="vendor/mermaid.min.js"></script><script>mermaid.initialize({startOnLoad:true,securityLevel:"strict",theme:"neutral",fontFamily:"system-ui",flowchart:{htmlLabels:false}});</script></body></html>

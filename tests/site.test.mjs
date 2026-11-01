@@ -33,19 +33,19 @@ test("publishes accurate research and news metadata", () => {
   assert.ok(roboRetry.links.some((link) => link.href.includes("vpzo1dW0Zm")));
   assert.ok(roboRetry.links.some((link) => link.href.includes("3Jpz2z9MIZ")));
 
-  assert.deepEqual(siteData.news[0], {
+  assert.deepEqual(siteData.news.at(-1), {
     date: "Aug 2025",
     title: "Joined Tsinghua University",
     body: "I joined the Department of Computer Science and Technology at Tsinghua University.",
   });
 });
 
-test("HTML contains four navigable views and comprehensive profile content", async () => {
+test("HTML contains five navigable views and comprehensive profile content", async () => {
   const html = await read("index.html");
-  for (const view of ["main", "info", "research", "blog", "article"]) {
+  for (const view of ["main", "info", "research", "blog", "notes", "article"]) {
     assert.match(html, new RegExp(`data-view=["']${view}["']`));
   }
-  assert.match(html, /Institute for Interdisciplinary Information Sciences/);
+  assert.match(html, /Department of Electronic Engineering/);
   assert.match(html, /A strangely balanced athlete/);
   assert.match(html, /best ultimate player on the badminton team/i);
   assert.match(html, /id=["']researchList["']/);

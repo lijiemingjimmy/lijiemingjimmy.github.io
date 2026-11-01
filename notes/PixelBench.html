@@ -1,0 +1,331 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PixelBench：让语言模型用文本写像素，再看重建能否帮助理解 · Jieming Li</title><link rel="stylesheet" href="../assets/styles.css"><link rel="stylesheet" href="../assets/notes.css"><link rel="stylesheet" href="vendor/katex/katex.min.css"></head><body class="note-page"><header class="note-nav"><a href="../index.html#notes">← Notes</a><a href="../index.html">Jieming Li</a></header><main class="note-layout"><aside class="note-outline"><p class="eyebrow">On this page</p><nav aria-label="目录"><ol><li><a href="#section-0">1. 先把两项贡献分开</a></li><li><a href="#section-1">2. Palette + Grid：把视觉内容变成普通文本</a></li><li><a href="#section-2">3. 三类任务分别测什么</a></li><li><a href="#section-3">4. T2P：94% 表示可辨认，不是像素还原准确</a></li><li><a href="#section-4">5. I2P：把“画一只鸟”变成“画眼前这只鸟”</a></li><li><a href="#section-5">6. P2T：只能看数字网格，能不能认出图像</a></li><li><a href="#section-7">7. 分辨率扩展测的是表达能力，也测长序列执行</a></li><li><a href="#section-8">8. PRT：把像素输出变成训练监督</a></li><li><a href="#section-10">9. PRT 带来了多大提升</a></li><li><a href="#section-11">10. 现在还不能把收益唯一归因于 Grid</a></li><li><a href="#section-12">11. 和 RecA 放在一起看，迁移方向正好互补</a></li><li><a href="#section-13">12. 对 VLA 和世界模型，下一步该测什么</a></li></ol></nav></aside><article class="note-content" id="content"><p class="eyebrow">Research notebook · 研究笔记</p><h1 id="noteTitle">PixelBench：让语言模型用文本写像素，再看重建能否帮助理解</h1>
+<p>给语言模型一个“兔子”的概念，它可以写出一段描述，也可以输出 SVG。PixelBench 再往下走了一层：<strong>让模型用已有文本词表，直接写出调色板和二维颜色索引网格，用这些文字确定每一个像素。</strong></p>
+<p>然后把问题反过来：只给模型这串像素文本，不展示渲染图，它能认出画的是什么吗？如果训练一个 VLM 输出这种重建结果，普通图像理解能力会不会随之改善？</p>
+<p>这项工作由 Haoquan Zhang、Feiyang Liu、Juanxi Tian、Wanhua Li、Haodong Duan、Weiyang Liu 完成，来自 CUHK、SCUT、NTU。本文根据提供的解读整理，并核对<a href="https://haoquanzhang.github.io/pixelbench/">官方项目页</a>。截至 2026 年 10 月 30 日本次核查，页面中的 Paper 和 Code 仍标记为 Coming soon；下文实验依据是项目页的公开说明，并未复现模型运行。</p>
+<h2 id="section-0">1. 先把两项贡献分开</h2>
+<p>PixelBench 包含一组能力评测，以及一个后训练实验。</p>
+<p><strong>评测部分</strong>检查现成模型怎样通过文本接口生成和识别低分辨率像素图，采用 zero-shot 设置。</p>
+<p><strong>训练部分</strong>提出 Pixel Reconstruction Tuning（PRT），往常规视觉指令训练中加入带像素重建的样本，再测普通图像输入下的理解能力。</p>
+<p>前者回答“现有模型已经能做到什么”，后者回答“加入这种监督有没有迁移收益”。模型之间的能力相关性，不能直接替代后训练的因果证据。</p>
+<p>这里的“无需图像 decoder”也有具体范围：输出只需要颜色查表，不新增学习型图像生成解码器。I2P 和 PRT 仍然接收真实图像，可以使用模型已有的视觉输入通路，并不是整个系统都不需要视觉编码器。</p>
+<h2 id="section-1">2. Palette + Grid：把视觉内容变成普通文本</h2>
+<p>直接为每个像素写 RGB，会重复大量颜色数值。PixelBench 将图片拆成：</p>
+<ul>
+<li><strong>Palette</strong>：最多八种颜色，每种颜色定义一次。</li>
+<li><strong>Grid</strong>：按行排列的颜色索引，每个位置指向一个调色板项。</li>
+</ul>
+<p>下面只是一个帮助理解格式的 4×4 例子，不是正式评测样本：</p>
+<pre><code class="language-json">{
+  &quot;palette&quot;: [&quot;#F4EFE5&quot;, &quot;#253B68&quot;],
+  &quot;grid&quot;: [
+    &quot;0110&quot;,
+    &quot;1111&quot;,
+    &quot;0110&quot;,
+    &quot;0110&quot;
+  ]
+}
+</code></pre>
+<p>给定 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>K</mi></mrow><annotation encoding="application/x-tex">K</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord mathnormal" style="margin-right:0.0715em;">K</span></span></span></span></eq> 个颜色组成的调色板 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>P</mi></mrow><annotation encoding="application/x-tex">P</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord mathnormal" style="margin-right:0.1389em;">P</span></span></span></span></eq>，以及索引矩阵 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>G</mi></mrow><annotation encoding="application/x-tex">G</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord mathnormal">G</span></span></span></span></eq>，渲染只需要：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mi>G</mi><mo>∈</mo><mo stretchy="false">{</mo><mn>0</mn><mo separator="true">,</mo><mo>…</mo><mo separator="true">,</mo><mi>K</mi><mo>−</mo><mn>1</mn><msup><mo stretchy="false">}</mo><mrow><mi>H</mi><mo>×</mo><mi>W</mi></mrow></msup><mo separator="true">,</mo><mspace width="2em"/><msub><mi>I</mi><mrow><mi>i</mi><mo separator="true">,</mo><mi>j</mi></mrow></msub><mo>=</mo><mi>P</mi><mo stretchy="false">[</mo><msub><mi>G</mi><mrow><mi>i</mi><mo separator="true">,</mo><mi>j</mi></mrow></msub><mo stretchy="false">]</mo><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+G\in\{0,\ldots,K-1\}^{H\times W},
+\qquad
+I_{i,j}=P[G_{i,j}].
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.7224em;vertical-align:-0.0391em;"></span><span class="mord mathnormal">G</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">∈</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mopen">{</span><span class="mord">0</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="minner">…</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal" style="margin-right:0.0715em;">K</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1.1774em;vertical-align:-0.2861em;"></span><span class="mord">1</span><span class="mclose"><span class="mclose">}</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8913em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right:0.0813em;">H</span><span class="mbin mtight">×</span><span class="mord mathnormal mtight" style="margin-right:0.1389em;">W</span></span></span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:2em;"></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0785em;">I</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:-0.0785em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">i</span><span class="mpunct mtight">,</span><span class="mord mathnormal mtight" style="margin-right:0.0572em;">j</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1.0361em;vertical-align:-0.2861em;"></span><span class="mord mathnormal" style="margin-right:0.1389em;">P</span><span class="mopen">[</span><span class="mord"><span class="mord mathnormal">G</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">i</span><span class="mpunct mtight">,</span><span class="mord mathnormal mtight" style="margin-right:0.0572em;">j</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span><span class="mclose">]</span><span class="mord">.</span></span></span></span></span></eqn></section><p>与 SVG 的差别是，SVG 可以用一个圆或一条路径让渲染器填出许多像素；这里每个网格位置都有显式的颜色选择。虽然仍有渲染步骤，但它只是查表，不负责推断几何或补充纹理。</p>
+<p>项目给出的五色 16×16 蘑菇案例中，Qwen3-VL tokenizer 将逐像素 RGB 编码为 2,855 tokens，而调色板加索引为 310 tokens，减少约 89%。这是特定图片、序列化方式和 tokenizer 下的统计，不是对所有图像固定成立的压缩比。<a href="https://haoquanzhang.github.io/pixelbench/#representation">表示与 token 开销</a></p>
+<p>一个索引也不一定对应一个文本 token。文本 tokenizer 可能把连续数字组合编码，因此要区分像素数量、字符数量和实际 token 数。</p>
+<h2 id="section-2">3. 三类任务分别测什么</h2>
+<table>
+<thead>
+<tr>
+<th>任务</th>
+<th>模型输入</th>
+<th>模型输出</th>
+<th>主要问题</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Text-to-Pixel，T2P</td>
+<td>物体名称</td>
+<td>Palette + Grid</td>
+<td>能否画出可辨认的概念？</td>
+</tr>
+<tr>
+<td>Image-to-Pixel，I2P</td>
+<td>原始图像，不给类别名</td>
+<td>Palette + Grid</td>
+<td>能否保留这张图的内容与布局？</td>
+</tr>
+<tr>
+<td>Pixel-to-Text，P2T</td>
+<td>调色板与网格文本</td>
+<td>十个候选概念中的答案</td>
+<td>能否从文本序列恢复视觉语义？</td>
+</tr>
+</tbody>
+</table>
+<p>它们不是同一种“准确率”。T2P 没有唯一正确的目标像素；I2P 关心源图信息保留；P2T 则是特定文本表示下的选择题。</p>
+<p>因此，这套评测更适合被理解为<strong>文本接口下的视觉能力探针</strong>。它同时涉及颜色、空间结构、序列建模和格式遵循，不能直接替代物体检测、分割、三维理解或高分辨率自然图像生成评测。</p>
+<h2 id="section-3">4. T2P：94% 表示可辨认，不是像素还原准确</h2>
+<p>T2P 使用五类共 100 个概念，在 16×16、32×32、64×64 三种分辨率下测试。模型自行决定外观和构图；评估将输出渲染后，用 SigLIP 从 500 个候选概念中检索名称，并辅以 VLM judge。</p>
+<p>项目报告 GPT-6 Astra 的结果：</p>
+<table>
+<thead>
+<tr>
+<th>分辨率</th>
+<th style="text-align:right">500 选一概念检索 Top-1</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>16×16</td>
+<td style="text-align:right">87%</td>
+</tr>
+<tr>
+<td>32×32</td>
+<td style="text-align:right">92%</td>
+</tr>
+<tr>
+<td>64×64</td>
+<td style="text-align:right">94%</td>
+</tr>
+</tbody>
+</table>
+<p>这个结果说明，很多输出已经能被视觉编码器识别成目标概念。例如一只兔子可以画成侧面或正面，只要生成图在候选集合中最匹配“兔子”，就可能得分。<a href="https://haoquanzhang.github.io/pixelbench/#reconstruction">T2P 设置与结果</a></p>
+<p>因此，94% 不表示 94% 的像素正确，也不表示任意属性、关系和风格指令都能满足。概念可辨认、细节正确、审美质量和文本遵循是不同维度。</p>
+<p>VLM judge 提供另一种观察，但同样有自身偏好。最好同时看检索分数、人工可读的案例与格式失败，而不是用单个分数概括全部生成质量。</p>
+<h2 id="section-4">5. I2P：把“画一只鸟”变成“画眼前这只鸟”</h2>
+<p>I2P 从 100 个 ImageNet 类别各取一张图，不提供类别名，要求生成保留主体、姿态、构图和主要颜色的像素图。</p>
+<p>评测包含从 100 张候选原图中检索源图，以及输出与原图的 SigLIP、DINO 特征相似度。它们提供了语义与视觉信息保留的指标，但仍不是逐像素误差或完整几何一致性度量。</p>
+<p>作者还设置两类传统图像处理对照：缩小图像后做颜色量化，以及 PIA-reduced。后者是 Pixelated Image Abstraction 的简化实现：先用 SLIC 划分颜色区域，再按区域平均颜色和面积做加权 K-means，构建八色调色板，最后将区域颜色分配采样到网格。</p>
+<p>结果需要按指标分别看：</p>
+<ul>
+<li>Astra 在跨分辨率平均的 SigLIP、DINO 相似度上领先。</li>
+<li>Sol 的平均源图检索准确率最高。</li>
+<li>在 64×64 下，PIA-reduced 的源图检索准确率为 78%，是主表这一项的最高结果。</li>
+</ul>
+<p>传统算法直接利用输入像素，并不需要通过语言序列重新推断一张图，因而在保留源图信息上具有很强的竞争力。<a href="https://haoquanzhang.github.io/pixelbench/#reconstruction">I2P 与传统基线</a></p>
+<p>此外，每个类别只有一张源图，检索成功可能部分受类别识别驱动。若想更严格地测实例细节，可以加入同类但姿态、颜色或构图不同的候选图。这个扩展属于评测建议，不能把当前结果直接理解成严格的实例级还原能力。</p>
+<h2 id="section-5">6. P2T：只能看数字网格，能不能认出图像</h2>
+<p>P2T 不给模型看渲染图，只输入调色板与索引网格的文本。模型从十个候选概念中选答案，随机猜测水平为 10%。</p>
+<p>输入来自两种来源：Astra 的 I2P 输出和 PIA-reduced 的算法输出。每种来源都有 100 张图、三个分辨率，两种来源共 600 道题。页面所说的 pixel oracle 指提供评测输入的参考来源，不意味着每张重建图都完美无误。</p>
+<table>
+<thead>
+<tr>
+<th>模型</th>
+<th style="text-align:right">PIA-reduced 输入</th>
+<th style="text-align:right">Astra 生成输入</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GPT-6 Astra</td>
+<td style="text-align:right">57.3%</td>
+<td style="text-align:right">77.7%</td>
+</tr>
+<tr>
+<td>GPT-5.6 Sol</td>
+<td style="text-align:right">32.3%</td>
+<td style="text-align:right">46.0%</td>
+</tr>
+<tr>
+<td>Claude Opus 5</td>
+<td style="text-align:right">24.0%</td>
+<td style="text-align:right">46.7%</td>
+</tr>
+<tr>
+<td>Kimi K3</td>
+<td style="text-align:right">18.3%</td>
+<td style="text-align:right">36.3%</td>
+</tr>
+<tr>
+<td>Gemini 3.6 Flash</td>
+<td style="text-align:right">16.3%</td>
+<td style="text-align:right">27.3%</td>
+</tr>
+<tr>
+<td>Seed-2.1 Pro</td>
+<td style="text-align:right">13.7%</td>
+<td style="text-align:right">18.3%</td>
+</tr>
+<tr>
+<td>DeepSeek V4 Pro</td>
+<td style="text-align:right">10.3%</td>
+<td style="text-align:right">14.7%</td>
+</tr>
+</tbody>
+</table>
+<p>每列是该来源在三种分辨率上的平均准确率。两种来源等量合并后，Astra 为 67.5%，Sol 为 39.2%，Opus 为 35.3%。<a href="https://haoquanzhang.github.io/pixelbench/#understanding">P2T 结果</a></p>
+<p>所有列出的模型都更容易读懂 Astra 生成的输入。一个值得检验的解释是，模型重建结果可能更倾向典型轮廓或更规则的结构，因而更容易由文本识别。这不必等价于它比传统算法保留了更多源图细节。</p>
+<h3 id="section-6">6.1 生成与理解相关，但机制没有被确定</h3>
+<p>跨模型的 Pearson 相关系数为：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mi>r</mi><mo stretchy="false">(</mo><mrow><mi mathvariant="normal">P</mi><mn>2</mn><mi mathvariant="normal">T</mi></mrow><mo separator="true">,</mo><mrow><mi mathvariant="normal">T</mi><mn>2</mn><mi mathvariant="normal">P</mi></mrow><mo stretchy="false">)</mo><mo>=</mo><mn>0.871</mn><mo separator="true">,</mo><mspace width="2em"/><mi>r</mi><mo stretchy="false">(</mo><mrow><mi mathvariant="normal">P</mi><mn>2</mn><mi mathvariant="normal">T</mi></mrow><mo separator="true">,</mo><mrow><mi mathvariant="normal">I</mi><mn>2</mn><mi mathvariant="normal">P</mi></mrow><mo stretchy="false">)</mo><mo>=</mo><mn>0.930.</mn></mrow><annotation encoding="application/x-tex">
+r(\mathrm{P2T},\mathrm{T2P})=0.871,
+\qquad
+r(\mathrm{P2T},\mathrm{I2P})=0.930.
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal" style="margin-right:0.0278em;">r</span><span class="mopen">(</span><span class="mord"><span class="mord mathrm">P2T</span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathrm">T2P</span></span><span class="mclose">)</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord">0.871</span><span class="mpunct">,</span><span class="mspace" style="margin-right:2em;"></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal" style="margin-right:0.0278em;">r</span><span class="mopen">(</span><span class="mord"><span class="mord mathrm">P2T</span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathrm">I2P</span></span><span class="mclose">)</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.6444em;"></span><span class="mord">0.930.</span></span></span></span></span></eqn></section><p>它说明在被测模型中，画得好的模型往往也读得好。它没有区分共同因素：更强的通用推理、更多训练数据、不同推理预算，都可能同时影响两项表现。</p>
+<p>还可以设计一个很直接的稳健性测试：随机打乱调色板顺序，同时一致地重映射网格索引。渲染图完全不变，如果理解结果大幅变化，就说明模型还依赖具体数字编码习惯。这个测试能帮助区分视觉结构与序列格式的影响，属于后续实验建议。</p>
+<h2 id="section-7">7. 分辨率扩展测的是表达能力，也测长序列执行</h2>
+<p>作者进一步对 Astra、Sol、Opus、Gemini 测试 16×16 到 128×128 的十种分辨率。这里使用固定的 50 个概念和 50 张原图，与主评测的 100 样本分别统计。</p>
+<p><strong>I2P 分辨率扫描的检索候选是 50 张原图，主表是 100 张。</strong> 各分辨率的结果独立生成，页面动画只是依次展示保存的输出，不是同一张图逐步细化的过程。<a href="https://haoquanzhang.github.io/pixelbench/#resolution">分辨率实验设置</a></p>
+<p>项目报告，I2P 中 Astra 的 DINO 相似度从 16² 的约 0.015 上升至 128² 的 0.333；Sol 在 48² 达到约 0.151，随后在 128² 降至 0.066。更大的网格并不总能被有效利用。</p>
+<p>将网格按顺序展开，可概念性写成：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mi>p</mi><mo stretchy="false">(</mo><mi>G</mi><mo>∣</mo><mi>c</mi><mo separator="true">,</mo><mi>P</mi><mo stretchy="false">)</mo><mo>=</mo><munderover><mo>∏</mo><mrow><mi>t</mi><mo>=</mo><mn>1</mn></mrow><mrow><mi>H</mi><mi>W</mi></mrow></munderover><mi>p</mi><mo stretchy="false">(</mo><msub><mi>g</mi><mi>t</mi></msub><mo>∣</mo><msub><mi>g</mi><mrow><mo>&lt;</mo><mi>t</mi></mrow></msub><mo separator="true">,</mo><mi>c</mi><mo separator="true">,</mo><mi>P</mi><mo stretchy="false">)</mo><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+p(G\mid c,P)
+=\prod_{t=1}^{HW}p(g_t\mid g_{&lt;t},c,P).
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal">p</span><span class="mopen">(</span><span class="mord mathnormal">G</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">∣</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal">c</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal" style="margin-right:0.1389em;">P</span><span class="mclose">)</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:3.0954em;vertical-align:-1.2671em;"></span><span class="mop op-limits"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.8283em;"><span style="top:-1.8829em;margin-left:0em;"><span class="pstrut" style="height:3.05em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">t</span><span class="mrel mtight">=</span><span class="mord mtight">1</span></span></span></span><span style="top:-3.05em;"><span class="pstrut" style="height:3.05em;"></span><span><span class="mop op-symbol large-op">∏</span></span></span><span style="top:-4.3em;margin-left:0em;"><span class="pstrut" style="height:3.05em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right:0.0813em;">H</span><span class="mord mathnormal mtight" style="margin-right:0.1389em;">W</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:1.2671em;"><span></span></span></span></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal">p</span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0359em;">g</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:-0.0359em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">∣</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0359em;">g</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:-0.0359em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mrel mtight">&lt;</span><span class="mord mathnormal mtight">t</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.1774em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal">c</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal" style="margin-right:0.1389em;">P</span><span class="mclose">)</span><span class="mord">.</span></span></span></span></span></eqn></section><p>这里是索引层面的分解，实际模型在文本 token 层面自回归生成。从 16² 到 128²，网格位置增加 64 倍，但 token 数和推理耗时不一定严格按同一倍率变化。</p>
+<p>模型既要组织局部细节，也要保持跨行、跨区域的一致性。重复图案、大色块和主体结构消失，都是值得分析的失败表现。</p>
+<p>不过，项目将失败或缺失输出按零分计入，曲线也受截断、格式错误、输出预算和解码设置影响。进一步分析应分开报告格式有效率、有效输出的质量和全部样本得分，才能判断高分辨率退化主要发生在哪一步。</p>
+<h2 id="section-8">8. PRT：把像素输出变成训练监督</h2>
+<p>Pixel Reconstruction Tuning 的输入是普通图像，目标文本依次包括：</p>
+<pre><code class="language-text">&lt;CAPTION&gt; 图像内容描述
+&lt;PALETTE&gt; 颜色定义及其对应内容的解释
+&lt;GRID&gt; 像素颜色索引网格
+</code></pre>
+<p>它希望让模型不仅说出“图中有一只鸟”，还要为颜色、形状和空间布局产生更具体的输出。</p>
+<p>用普通图像条件自回归监督来概括：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi mathvariant="script">L</mi><mrow><mi mathvariant="normal">P</mi><mi mathvariant="normal">R</mi><mi mathvariant="normal">T</mi></mrow></msub><mo>=</mo><mo>−</mo><munder><mo>∑</mo><mi>t</mi></munder><mi>log</mi><mo>⁡</mo><msub><mi>p</mi><mi>θ</mi></msub><mo stretchy="false">(</mo><msub><mi>y</mi><mi>t</mi></msub><mo>∣</mo><mi>I</mi><mo separator="true">,</mo><msub><mi>y</mi><mrow><mo>&lt;</mo><mi>t</mi></mrow></msub><mo stretchy="false">)</mo><mo separator="true">,</mo></mrow><annotation encoding="application/x-tex">
+\mathcal L_{\mathrm{PRT}}
+=-\sum_t\log p_\theta(y_t\mid I,y_{&lt;t}),
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathcal">L</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3283em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">PRT</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:2.3em;vertical-align:-1.25em;"></span><span class="mord">−</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mop op-limits"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.05em;"><span style="top:-1.9em;margin-left:0em;"><span class="pstrut" style="height:3.05em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span><span style="top:-3.05em;"><span class="pstrut" style="height:3.05em;"></span><span><span class="mop op-symbol large-op">∑</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:1.25em;"><span></span></span></span></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mop">lo<span style="margin-right:0.0139em;">g</span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal">p</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0278em;">θ</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0359em;">y</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:-0.0359em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">∣</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal" style="margin-right:0.0785em;">I</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0359em;">y</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:-0.0359em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mrel mtight">&lt;</span><span class="mord mathnormal mtight">t</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.1774em;"><span></span></span></span></span></span></span><span class="mclose">)</span><span class="mpunct">,</span></span></span></span></span></eqn></section><p>其中 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>y</mi></mrow><annotation encoding="application/x-tex">y</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.625em;vertical-align:-0.1944em;"></span><span class="mord mathnormal" style="margin-right:0.0359em;">y</span></span></span></span></eq> 包含描述、颜色解释与网格。这个式子是对训练任务的形式化说明，不是已核查源码后的完整损失实现。</p>
+<h3 id="section-9">8.1 训练数据怎样得到</h3>
+<p>作者从 PixMo-Cap 选图，去除与评测图像完全重复的样本，并筛掉不适合低分辨率方形重建的内容，如极端长宽比、文字密集图和多面板布局。</p>
+<p>然后由 PIA-reduced 生成 16² 与 32² 的八色结果，按 SigLIP2 与原图的相似度排序，分别保留前 40% 和前 80%。</p>
+<p>Gemini 3.8 Flash 根据源图、重建图和调色板补写语义描述及颜色解释。<strong>调色板和网格由传统算法确定，额外模型负责描述与解释。</strong> <a href="https://haoquanzhang.github.io/pixelbench/#training">PRT 数据构造</a></p>
+<p>因此，PRT 包含自动生成的空间目标和语言监督，不能笼统称为只有像素的纯自监督训练。筛选也让数据更偏向低分辨率下仍可辨认的图像，不代表复杂场景和细小文字已经被覆盖。</p>
+<h2 id="section-10">9. PRT 带来了多大提升</h2>
+<p>训练从 Molmo2-4B 的 image-pretraining checkpoint（step 32,000）开始：</p>
+<table>
+<thead>
+<tr>
+<th>设置</th>
+<th>数据</th>
+<th>更新与训练安排</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>对照组</td>
+<td>500,000 条 LLaVA-OneVision-1.5 指令数据</td>
+<td>更新全部模块，遍历一次数据</td>
+</tr>
+<tr>
+<td>PRT 组</td>
+<td>同一批指令数据 + 2,000 条 PRT 数据</td>
+<td>同样更新全部模块，遍历一次数据</td>
+</tr>
+</tbody>
+</table>
+<p>PRT 数据中两个分辨率各有 1,000 张不同图像；主实验使用四组配对随机种子，评测 16 个视觉理解 benchmark。</p>
+<table>
+<thead>
+<tr>
+<th>汇总方式</th>
+<th style="text-align:right">对照组</th>
+<th style="text-align:right">加入 PRT</th>
+<th style="text-align:right">报告变化</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>按官方评测单元汇总</td>
+<td style="text-align:right">54.2</td>
+<td style="text-align:right">54.8</td>
+<td style="text-align:right">+0.6 分</td>
+</tr>
+<tr>
+<td>16 个 benchmark 等权平均</td>
+<td style="text-align:right">54.1</td>
+<td style="text-align:right">54.6</td>
+<td style="text-align:right">+0.5 分</td>
+</tr>
+</tbody>
+</table>
+<p>其中 BlindTest 提升 1.4 分，VLM Bias 提升 1.1 分，CV-Bench 提升 0.9 分，也有任务基本不变或略降。<a href="https://haoquanzhang.github.io/pixelbench/#training">训练与评估结果</a></p>
+<p>这次测试输入的是普通图像，并非只看模型是否更会写像素网格。因此它提供了一个小幅的跨任务迁移信号。</p>
+<p>但 2,000/500,000=0.4% 指的是<strong>样本数增幅</strong>。像素网格可能比普通答案更长，实验组也多了样本；0.4% 不能直接当作 token、计算量或训练时间的增幅。</p>
+<p>作者还测试了 1,000 到 8,000 条 PRT 数据，平均收益没有随数据量单调增长。目前不能据此推导持续的数据 scaling 趋势。</p>
+<h2 id="section-11">10. 现在还不能把收益唯一归因于 Grid</h2>
+<p>完整 PRT 同时增加了图像、caption、颜色解释、网格目标和训练量。四组配对随机种子有助于减少随机初始化等因素的影响，但不能自动拆开这些新增因素。</p>
+<p>要回答“像素重建本身是否改善空间理解”，关键对照应使用相同图像，并尽量匹配总训练 token 或计算预算：</p>
+<table>
+<thead>
+<tr>
+<th>对照</th>
+<th>主要检验什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Caption-only</td>
+<td>描述监督是否已经能解释收益</td>
+</tr>
+<tr>
+<td>Caption + 颜色解释</td>
+<td>颜色语义和额外语言内容的贡献</td>
+</tr>
+<tr>
+<td>Caption + Grid</td>
+<td>网格是否提供独立于颜色解释的收益</td>
+</tr>
+<tr>
+<td>Full PRT</td>
+<td>完整组合是否进一步有用</td>
+</tr>
+<tr>
+<td>等预算普通视觉指令数据</td>
+<td>新增训练资源本身的影响</td>
+</tr>
+</tbody>
+</table>
+<p>如果继续比较空间目标，还可加入保留颜色统计但破坏布局的对照，并谨慎解释它带来的分布变化。这样能进一步区分位置结构、颜色信息和输出格式学习。</p>
+<p>统计上应报告配对种子的逐组变化与不确定性，而不只给均值。+0.6 分是项目报告的结果，没有方差或区间，不能仅凭这个数字断言统计显著。</p>
+<p>作者在项目页同样承认机制未明和消融不足。这项结果适合被定位为值得继续验证的正向证据，而不是已经证明了“逐像素生成必然增强视觉理解”。</p>
+<h2 id="section-12">11. 和 RecA 放在一起看，迁移方向正好互补</h2>
+<p>前一篇 <a href="RecA.html">RecA 笔记</a> 讨论的是：用模型自己的视觉理解特征作为条件，重建原图，改善 UMM 的生成与编辑能力。</p>
+<p>PRT 关注的是：让普通 VLM 通过文本接口输出视觉重建目标，再检查理解任务是否受益。</p>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>RecA</th>
+<th>PixelBench 中的 PRT</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>模型基础</td>
+<td>已有理解与生成通路的 UMM</td>
+<td>能接收图像并输出文本的 VLM</td>
+</tr>
+<tr>
+<td>输出形式</td>
+<td>原模型的图像 token、latent 或生成目标</td>
+<td>Caption、Palette 与 Grid 文本</td>
+</tr>
+<tr>
+<td>主要迁移方向</td>
+<td>理解表征 → 更好的生成和编辑</td>
+<td>视觉输出监督 → 更好的理解</td>
+</tr>
+<tr>
+<td>重要设计问题</td>
+<td>语义瓶颈、避免复制、保持理解能力</td>
+<td>空间目标是否有独立价值、输出预算与数据构成</td>
+</tr>
+</tbody>
+</table>
+<p>两项工作共同提示，视觉内容可以成为输出监督，而不必一直只当作输入。但各自的实验并不能合并成一个已经验证的双向增强闭环。</p>
+<p>一个有意思的区别是：RecA 需要防止重建退化为无助于语义迁移的复制；PRT 则需要确定密集网格究竟提供了多少语言描述之外的有效监督。它们都要求检查“重建得好”与“目标能力变好”之间的关系。</p>
+<h2 id="section-13">12. 对 VLA 和世界模型，下一步该测什么</h2>
+<p>以下是研究推演，PixelBench 尚未展示机器人动作或动力学预测的收益。</p>
+<p>可以在 VLA 的动作学习之外加入空间目标：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mi mathvariant="script">L</mi><mo>=</mo><msub><mi mathvariant="script">L</mi><mrow><mi mathvariant="normal">a</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">n</mi></mrow></msub><mo>+</mo><mi>λ</mi><msub><mi mathvariant="script">L</mi><mrow><mi mathvariant="normal">g</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">d</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">g</mi></mrow></msub><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+\mathcal L=\mathcal L_{\mathrm{action}}
++\lambda\mathcal L_{\mathrm{grounding}}.
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord mathcal">L</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathcal">L</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3175em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">action</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.9805em;vertical-align:-0.2861em;"></span><span class="mord mathnormal">λ</span><span class="mord"><span class="mord mathcal">L</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight" style="margin-right:0.0139em;">grounding</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span><span class="mord">.</span></span></span></span></span></eqn></section><p>其中 grounding 不一定重建 RGB。操作相关的实例区域、关键点、深度、表面方向和接触候选区域，可能比完整颜色网格更接近控制需求。</p>
+<p>应当根据任务挑选信息：抓取可能关心物体边界和可接触区域，插入需要细小几何与相对位姿，导航则可能更需要深度和可通行区域。过低的分辨率可能刚好删掉决定成功的细节。</p>
+<p>对世界模型，静态重建也不等于学习动作后果。需要另外验证：不同动作是否导致正确的未来变化，多步预测是否保持对象身份与结构，以及这种改进是否帮助规划。</p>
+<p>项目提出的 Grounding Bench 方向，包括深度、表面法向和语义分割等任务，体现了从像素接口走向更一般空间监督的思路。它目前是后续方向，不应当写成这些任务已经全部验证有效。<a href="https://haoquanzhang.github.io/pixelbench/#outlook">作者后续讨论</a></p>
+<p>PixelBench 最有价值的研究问题，是怎样用较低的序列和训练成本，让模型必须表达图像中的具体位置与内容。现有结果表明这种路径可行，也出现了小幅理解收益；要进一步建立方法，需要找出真正起作用的监督成分，以及它能够迁移到哪些任务。</p>
+<footer><a href="../index.html#notes">← All notes</a></footer></article></main></body></html>

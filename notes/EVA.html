@@ -1,0 +1,127 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>EVA：让视频世界模型生成机器人能够执行的动作 · Jieming Li</title><link rel="stylesheet" href="../assets/styles.css"><link rel="stylesheet" href="../assets/notes.css"><link rel="stylesheet" href="vendor/katex/katex.min.css"></head><body class="note-page"><header class="note-nav"><a href="../index.html#notes">← Notes</a><a href="../index.html">Jieming Li</a></header><main class="note-layout"><aside class="note-outline"><p class="eyebrow">On this page</p><nav aria-label="目录"><ol><li><a href="#section-0">1. 为什么合理的视频不一定对应合理的动作</a></li><li><a href="#section-1">2. 用 IDM 把动作约束反馈给视频模型</a></li><li><a href="#section-2">3. 奖励衡量的是运动学可执行性</a></li><li><a href="#section-3">4. 实验结果说明了什么</a></li><li><a href="#section-4">5. 主要局限：平滑不等于正确</a></li><li><a href="#section-5">6. 和 UNITAS 的区别</a></li><li><a href="#section-6">7. 对后续研究的启发</a></li></ol></nav></aside><article class="note-content" id="content"><p class="eyebrow">Research notebook · 研究笔记</p><h1 id="noteTitle">EVA：让视频世界模型生成机器人能够执行的动作</h1>
+<p>论文：<strong>Aligning Video World Models with Executable Robot Actions via Inverse Dynamics Rewards</strong>。</p>
+<p>本笔记依据提供的论文解读整理，实验数字沿用该材料，未独立复核原文。</p>
+<p>EVA 关注的是视频世界模型的 <strong>Executability Gap</strong>：模型生成的操作视频看起来合理，但从视频反推出来的机器人动作可能速度过大、抖动明显，甚至无法稳定执行。</p>
+<p>它的思路是：<strong>用冻结的逆动力学模型把视频转换成动作，再根据动作的平滑性和运动限幅给视频模型提供奖励。</strong> 这样，视频生成不只追求视觉合理，也开始考虑下游机器人如何执行。</p>
+<h2 id="section-0">1. 为什么合理的视频不一定对应合理的动作</h2>
+<p>Video World Model + Inverse Dynamics Model（IDM）的常见流程是：</p>
+<p><strong>当前观察与语言指令 → 未来操作视频 → IDM → 机器人动作。</strong></p>
+<p>视频模型主要学习视觉分布，但视觉上连续的画面不一定满足机器人运动学约束。例如机械臂在两帧之间移动过远，或机器人形状在生成过程中发生变化，IDM 都可能把这些现象解码成不合理的关节指令。</p>
+<p>因此，这条路线需要同时回答两个问题：</p>
+<ul>
+<li>视频是否符合任务要求？</li>
+<li>实现这段视频所需的动作是否可执行？</li>
+</ul>
+<p>单纯提升图像清晰度或视频自然程度，不能保证第二个问题得到解决。</p>
+<h2 id="section-1">2. 用 IDM 把动作约束反馈给视频模型</h2>
+<p>EVA 保留视频模型架构，通过 RL post-training 改善生成结果。训练过程可以分成几步：</p>
+<ol>
+<li>用真实机器人示教训练 IDM，然后冻结它。</li>
+<li>对同一观察和任务生成多条候选视频。</li>
+<li>用 IDM 将每条视频解码成关节位置序列。</li>
+<li>根据动作的加速度、jerk 和运动限幅计算奖励。</li>
+<li>用 Flow-GRPO 更新视频模型的 LoRA 参数。</li>
+</ol>
+<p>冻结 IDM 的意义是让动作解码接口在这轮训练中保持固定，优化对象是上游视频生成器。</p>
+<p>奖励根据预测动作计算，不需要每条候选视频都在真实机器人上执行。因此这里的 RL 不等于反复进行真机试错，但它仍然依赖真实示教训练出的 IDM。</p>
+<h2 id="section-2">3. 奖励衡量的是运动学可执行性</h2>
+<p>材料给出的奖励形式为：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mi>R</mi><mo>=</mo><mo>−</mo><mrow><mo fence="true">(</mo><msub><mi>λ</mi><mi>j</mi></msub><msub><mi>P</mi><mrow><mi mathvariant="normal">j</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">k</mi></mrow></msub><mo>+</mo><msub><mi>λ</mi><mi>α</mi></msub><msub><mi>P</mi><mrow><mi mathvariant="normal">a</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">c</mi></mrow></msub><mo>+</mo><msub><mi>λ</mi><mi>v</mi></msub><msub><mi>P</mi><mrow><mi mathvariant="normal">v</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">l</mi><mtext>-</mtext><mi mathvariant="normal">l</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">t</mi></mrow></msub><mo>+</mo><msub><mi>λ</mi><mi>a</mi></msub><msub><mi>P</mi><mrow><mi mathvariant="normal">a</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">c</mi><mtext>-</mtext><mi mathvariant="normal">l</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">t</mi></mrow></msub><mo fence="true">)</mo></mrow><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+R=-\left(
+\lambda_jP_{\mathrm{jerk}}
++\lambda_\alpha P_{\mathrm{acc}}
++\lambda_vP_{\mathrm{vel\text{-}limit}}
++\lambda_aP_{\mathrm{acc\text{-}limit}}
+\right).
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord mathnormal" style="margin-right:0.0077em;">R</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1.0361em;vertical-align:-0.2861em;"></span><span class="mord">−</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="minner"><span class="mopen delimcenter" style="top:0em;">(</span><span class="mord"><span class="mord mathnormal">λ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0572em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1389em;">P</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:-0.1389em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">jerk</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mord"><span class="mord mathnormal">λ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0037em;">α</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1389em;">P</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:-0.1389em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">acc</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mord"><span class="mord mathnormal">λ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0359em;">v</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1389em;">P</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:-0.1389em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">vel</span><span class="mord text mtight"><span class="mord mtight">-</span></span><span class="mord mathrm mtight">limit</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mord"><span class="mord mathnormal">λ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">a</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1389em;">P</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:-0.1389em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">acc</span><span class="mord text mtight"><span class="mord mtight">-</span></span><span class="mord mathrm mtight">limit</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mclose delimcenter" style="top:0em;">)</span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord">.</span></span></span></span></span></eqn></section><p>其中包含两类约束：</p>
+<table>
+<thead>
+<tr>
+<th>类型</th>
+<th>希望改善的问题</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>加速度与 jerk 惩罚</td>
+<td>减少动作突变和抖动</td>
+</tr>
+<tr>
+<td>速度与加速度限幅惩罚</td>
+<td>减少超出设定运动范围的动作</td>
+</tr>
+</tbody>
+</table>
+<p>从关节位置序列估计这些量时，需要考虑帧间时间。比较不同采样频率的数据，不能只比较未经时间尺度换算的位置差分。</p>
+<p>这些奖励提供的是运动学代理信号。它们没有直接证明机器人能够抓住物体、克服摩擦或完成目标，也没有完整约束接触力与力矩。</p>
+<p>因此，EVA 更适合被理解为给视频生成增加 <strong>Kinematic Feasibility Prior</strong>，而不是把视频模型变成物理仿真器。</p>
+<h2 id="section-3">4. 实验结果说明了什么</h2>
+<p>EVA 使用 Wan2.1-14B 视频骨干，材料记载了 RoboTwin、LIBERO 和真实双臂机器人实验。主要数字如下：</p>
+<table>
+<thead>
+<tr>
+<th>评测</th>
+<th style="text-align:right">Base</th>
+<th style="text-align:right">EVA</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RoboTwin 2.0，21 个任务平均成功率</td>
+<td style="text-align:right">45.81%</td>
+<td style="text-align:right">52.29%</td>
+</tr>
+<tr>
+<td>人工评价的生成视频 Perfect 比例</td>
+<td style="text-align:right">68.1%</td>
+<td style="text-align:right">83.8%</td>
+</tr>
+</tbody>
+</table>
+<p>RoboTwin 成功率提高了 6.48 个百分点，说明在这个设置中，通过动作奖励优化视频生成器能够改善最终执行。</p>
+<p>人工评价的视频质量也有提升，但 Perfect 比例和机器人任务成功率是两种指标，不能互相替代。</p>
+<p>另一个实验使用 EVA 生成的视频—动作数据微调 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>π</mi><mn>0.5</mn></msub></mrow><annotation encoding="application/x-tex">\pi_{0.5}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.5806em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0359em;">π</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:-0.0359em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight">0.5</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span></eq>。在三个 RoboTwin 任务上，平均成功率从 54.3% 提升到 63.7%。这说明优化后的视频还可能提供更有价值的训练数据，而不只是用于直接视频规划。</p>
+<h2 id="section-4">5. 主要局限：平滑不等于正确</h2>
+<p>EVA 的奖励存在一个直接漏洞：机械臂完全不动，也可能获得很好的平滑性分数。</p>
+<p>类似地，机器人可以平滑地移动到错误位置，或在没有抓住物体的情况下完成一段动作。这些行为在运动学上合理，却没有完成任务。提供的解读指出，论文也观察到了静止轨迹和错误交互获得良好奖励的情况。</p>
+<p>另一个问题是 IDM 本身的可靠性。它在真实示教上训练，但需要解码生成模型产生的视频。如果视频已经偏离 IDM 熟悉的分布，解码出的平滑动作不一定忠实对应画面里的运动。</p>
+<p>因此，奖励变好之后，仍需检查任务进度、视频与动作的一致性，以及真实执行结果。不能仅凭 IDM 输出的动作变平滑，就断言生成视频已经物理正确。</p>
+<h2 id="section-5">6. 和 UNITAS 的区别</h2>
+<p>EVA 和 UNITAS 处理的是不同层面的缺口：</p>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>EVA</th>
+<th>UNITAS</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>主要表示</td>
+<td>未来操作视频</td>
+<td>三维点轨迹与控制动作</td>
+</tr>
+<tr>
+<td>改进位置</td>
+<td>用动作奖励后训练视频模型</td>
+<td>重新设计动作与场景变化的表示</td>
+</tr>
+<tr>
+<td>控制与预测的联系</td>
+<td>视频经 IDM 转为动作</td>
+<td>动作分支与动态预测分支共享训练表征</td>
+</tr>
+<tr>
+<td>关键问题</td>
+<td>视觉合理性不保证动作可执行</td>
+<td>三维预测能力是否真正参与执行决策</td>
+</tr>
+</tbody>
+</table>
+<p>两篇的 RoboTwin 数字不能直接比较：EVA 的相关结果覆盖 21 个任务，UNITAS 覆盖 50 个任务，训练数据、执行流程和控制接口也不同。</p>
+<h2 id="section-6">7. 对后续研究的启发</h2>
+<p>EVA 提供了一种可复用的优化方式：把生成结果经过下游动作解码器，再用可执行性指标反过来优化生成器。</p>
+<p>更进一步，可以在平滑性之外加入任务进度、接触合理性和执行一致性约束，并单独检查静止行为等奖励漏洞。若结合三维世界模型，还可以对候选动作的场景后果做验证，再决定是否保留该候选。</p>
+<p>这些是基于本文思路的延伸。EVA 当前最明确的价值，是将“画面能不能生成”推进到“生成结果能不能被动作接口实现”，而不是已经解决完整的物理与任务正确性问题。</p>
+<footer><a href="../index.html#notes">← All notes</a></footer></article></main></body></html>

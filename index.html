@@ -6,7 +6,8 @@
     <meta name="description" content="Jieming Li — Tsinghua undergraduate researcher working on world models, vision-language-action models, embodied intelligence, and educational AI systems." />
     <meta name="theme-color" content="#f3efe5" />
     <title>Home · Jieming Li</title>
-    <link rel="stylesheet" href="assets/styles.css?v=20260717" />
+    <link rel="stylesheet" href="assets/styles.css?v=20261101" />
+      <link rel="stylesheet" href="assets/notes.css" />
   </head>
   <body>
     <a class="skip-link" href="#mainContent">Skip to content</a>
@@ -17,6 +18,7 @@
         <a href="#info" data-route="info">My Info</a>
         <a href="#research" data-route="research">Research</a>
         <a href="#blog" data-route="blog">Blog</a>
+        <a href="#notes" data-route="notes">Notes</a>
       </nav>
 
       <button class="menu-button" id="menuToggle" type="button" aria-label="Toggle navigation" aria-expanded="false">Menu</button>
@@ -29,7 +31,7 @@
             <p class="eyebrow">lijiemingjimmy.github.io</p>
             <h1 id="mainTitle" tabindex="-1">Welcome to Jimmy's homepage</h1>
             <p class="hero-lead">
-              I am <strong>Jieming Li</strong>, an undergraduate student in Computer Science and Technology at Tsinghua University. I currently conduct research with Prof. Mengdi Xu at the Institute for Interdisciplinary Information Sciences, focusing on world models and vision-language-action models.
+              I am <strong>Jieming Li</strong>, an undergraduate student in Computer Science and Technology at Tsinghua University. I currently conduct research with Prof. Ning Ding in the Department of Electronic Engineering (OpenRUA team), focusing on world models and vision-language-action models.
             </p>
             <p class="hero-note">
               My research explores how embodied agents can learn from experience, anticipate the consequences of their actions, and recover intelligently from failure. I am particularly interested in connecting generative world modeling with reliable robot decision-making.
@@ -37,7 +39,7 @@
 
             <div class="quick-facts" aria-label="Quick facts">
               <p><strong>Education</strong><span>B.Eng. in Computer Science, Tsinghua University</span></p>
-              <p><strong>Research group</strong><span>IIIS · Prof. Mengdi Xu</span></p>
+              <p><strong>Research group</strong><span>OpenRUA · Prof. Ning Ding</span></p>
               <p><strong>Current focus</strong><span>World Models · VLA · Robot Learning</span></p>
               <p><strong>Also building</strong><span>AI systems for writing and education</span></p>
             </div>
@@ -50,6 +52,7 @@
             <div class="profile-links">
               <a href="mailto:lijm25@mails.tsinghua.edu.cn">Email</a>
               <a href="https://github.com/lijiemingjimmy" target="_blank" rel="noreferrer">GitHub</a>
+              <a href="#info-contact">WeChat</a>
               <a href="https://openreview.net/profile?id=~Jieming_Li2" target="_blank" rel="noreferrer">OpenReview</a>
             </div>
           </aside>
@@ -58,6 +61,7 @@
         <section class="news-section" aria-labelledby="newsTitle">
           <p class="eyebrow">Updates</p>
           <h2 id="newsTitle">News</h2>
+          <article class="news-item"><time datetime="2026-10">Oct 2026</time><div><h3>Tsinghua University Comprehensive Scholarship</h3><p>Awarded the Tsinghua University Comprehensive Scholarship (清华大学综合奖学金).</p></div></article>
           <article class="news-item">
             <time datetime="2025-08">Aug 2025</time>
             <div><h3>Joined Tsinghua University</h3><p>I joined the Department of Computer Science and Technology at Tsinghua University.</p></div>
@@ -75,7 +79,8 @@
               <a href="#info-education">Education</a>
               <a href="#info-research">Research Experience</a>
               <a href="#info-projects">Selected Projects</a>
-              <a href="#info-skills">Skills & Interests</a>
+              <a href="#info-awards">Honors &amp; Awards</a>
+              <a href="#info-skills">Skills &amp; Interests</a>
               <a href="#info-fun">Fun Facts</a>
             </nav>
           </aside>
@@ -92,20 +97,23 @@
 
             <section id="info-research">
               <h2>Research Experience</h2>
-              <div class="resume-entry"><div><h3>Institute for Interdisciplinary Information Sciences, Tsinghua University</h3><p><strong>Undergraduate Researcher · Prof. Mengdi Xu's group</strong></p><p>Researching world models and vision-language-action models for embodied agents, with particular interest in learning from interaction, failure-aware adaptation, and reliable robot decision-making.</p></div><time>Present</time></div>
+              <div class="resume-entry"><div><h3>Department of Electronic Engineering, Tsinghua University</h3><p><strong>Undergraduate Researcher · Prof. Ning Ding’s group · OpenRUA team</strong></p><p>Researching world models and vision-language-action models for embodied agents, with particular interest in learning from interaction, failure-aware adaptation, and reliable robot decision-making.</p></div><time>Present</time></div>
             </section>
 
             <section id="info-projects">
               <h2>Selected Projects</h2>
+              <div class="resume-entry"><div><h3>AAArena</h3><p>Co-author. Evaluating heuristic learning in a long-running game agent competition.</p></div><a href="#research">Research →</a></div>
               <div class="resume-entry"><div><h3>RoboRetry</h3><p>Second author. Studying how VLA policies use multimodal failure context to improve subsequent attempts; accepted at the CVPR 2026 3D-LLM/VLA Workshop and submitted to EMNLP 2026.</p></div><a href="#research">Research →</a></div>
-              <div class="resume-entry"><div><h3>Writing & Communication Coach Agent</h3><p>An educational AI project for the Language Teaching Center at Tsinghua University, combining stateful diagnosis, course-grounded feedback, revision tracking, and anti-ghostwriting safeguards.</p></div><a href="#research">Demo →</a></div>
+              <div class="resume-entry"><div><h3>Writing & Communication Coach Agent</h3><p>An educational AI project for the Language Teaching Center at Tsinghua University, combining stateful diagnosis, course-grounded feedback, revision tracking, and anti-ghostwriting safeguards.</p></div><a href="#blog/wam">Read →</a></div>
             </section>
 
+            <section id="info-awards"><h2>Honors &amp; Awards</h2><div id="awardsList"><div class="resume-entry"><div><h3>Tsinghua University Comprehensive Scholarship</h3><p>清华大学综合奖学金</p></div><time>Oct 2026</time></div><div class="resume-entry"><div><h3>ATEC 2026 · Hong Kong On-site Competition</h3><p>5th Place · 香港现场赛第五名</p></div><time>2026</time></div><div class="resume-entry"><div><h3>THUEI3 Embodied Intelligence Challenge</h3><p>Third Prize · Team lead · 具身智能挑战赛三等奖</p></div><time></time></div><div class="resume-entry"><div><h3>Department of Electronic Engineering Agent Competition</h3><p>Second Prize · 电子系智能体竞赛二等奖</p></div><time></time></div><div class="resume-entry"><div><h3>Tsinghua University Freshman Scholarship</h3><p>新生奖学金</p></div><time></time></div></div></section>
             <section id="info-skills">
               <h2>Skills & Interests</h2>
-              <div class="skill-grid"><p><strong>Research</strong><span>World models, VLA, robot learning, multimodal generation</span></p><p><strong>Engineering</strong><span>Python, TypeScript, React, FastAPI, research prototyping</span></p><p><strong>Beyond the lab</strong><span>Badminton, ultimate frisbee, distance running</span></p></div>
+              <div class="skill-grid"><p><strong>Research</strong><span>World models, VLA, robot learning, multimodal generation</span></p><p><strong>Engineering</strong><span>Python, Rust, TypeScript, React, FastAPI, research prototyping</span></p><p><strong>Beyond the lab</strong><span>Badminton, ultimate frisbee, distance running</span></p></div>
             </section>
 
+            <section id="info-contact"><h2>Let’s connect</h2><p>WeChat: <strong>li-jm25</strong> · Scan to add me or ask about WAM.</p><img class="wechat-qr" src="assets/images/wechat-qr.jpg" alt="Jieming Li’s WeChat contact QR code" loading="lazy" /></section>
             <section class="fun-card" id="info-fun">
               <p class="eyebrow">Fun facts</p>
               <h2>A strangely balanced athlete</h2>
@@ -122,14 +130,18 @@
       </section>
 
       <section class="view" data-view="blog" aria-labelledby="blogTitle" hidden>
-        <header class="page-heading"><p class="eyebrow">Writing archive</p><h1 id="blogTitle" tabindex="-1">Blog</h1><p>Research notes, engineering decisions, and reflections from building systems that think with people.</p></header>
+        <header class="page-heading"><p class="eyebrow">Writing archive</p><h1 id="blogTitle" tabindex="-1">Blog</h1><p>Projects, demos, and stories from building agents. For paper reading and technical notes, visit Notes.</p></header>
         <div class="blog-layout"><aside id="blogCategories" class="blog-categories" aria-label="Blog categories"></aside><div id="blogList" class="blog-list" aria-live="polite"></div></div>
       </section>
 
+      <section class="view" data-view="notes" aria-labelledby="notesTitle" hidden>
+        <header class="page-heading"><p class="eyebrow">Reading &amp; thinking</p><h1 id="notesTitle" tabindex="-1">Notes</h1><p>论文阅读、技术推导与研究想法。保留原笔记中的来源和待复核标记。</p></header>
+        <label class="notes-search-label" for="notesSearch">Search notes / 搜索笔记</label><input id="notesSearch" type="search" placeholder="Title, topic, keyword…" /><p id="notesCount" aria-live="polite"></p><div id="notesList" class="notes-list"></div>
+      </section>
       <section class="view" data-view="article" aria-label="Blog article" hidden></section>
     </main>
 
     <footer class="site-footer"><span>© 2026 Jieming Li</span><a href="mailto:lijm25@mails.tsinghua.edu.cn">lijm25@mails.tsinghua.edu.cn</a></footer>
-    <script type="module" src="assets/script.js?v=20260717"></script>
+    <script type="module" src="assets/script.js?v=20261101"></script>
   </body>
 </html>

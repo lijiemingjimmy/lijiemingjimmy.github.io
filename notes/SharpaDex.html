@@ -1,0 +1,127 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SharpaDex：把双手接触过程变成可以学习的数据 · Jieming Li</title><link rel="stylesheet" href="../assets/styles.css"><link rel="stylesheet" href="../assets/notes.css"><link rel="stylesheet" href="vendor/katex/katex.min.css"></head><body class="note-page"><header class="note-nav"><a href="../index.html#notes">← Notes</a><a href="../index.html">Jieming Li</a></header><main class="note-layout"><aside class="note-outline"><p class="eyebrow">On this page</p><nav aria-label="目录"><ol><li><a href="#section-0">1. 数据规模之外，更重要的是模态能对上</a></li><li><a href="#section-1">2. 58 个有效关节维度，不等于文件只有 58 维</a></li><li><a href="#section-2">3. wrench 和触觉视频各自提供什么</a></li><li><a href="#section-3">4. 300 小时里有多少是真正有用的接触</a></li><li><a href="#section-4">5. 公平比较触觉，应该固定哪些东西</a></li><li><a href="#section-5">6. 时间尺度和数据划分决定结论能不能相信</a></li><li><a href="#section-6">7. 与四篇相关论文怎样连起来</a></li></ol></nav></aside><article class="note-content" id="content"><p class="eyebrow">Research notebook · 研究笔记</p><h1 id="noteTitle">SharpaDex：把双手接触过程变成可以学习的数据</h1>
+<p>拧瓶盖最难的部分，往往被手指挡住了。相机可以看到手已经碰到瓶盖，却不一定能判断捏持是否稳定、瓶盖有没有滑动，以及两只手是不是在相互较劲。</p>
+<p>SharpaDex 的价值，是把这些过程中的视觉、指尖受力、触觉形变和动作同步记录下来。<strong>它让研究者能够直接研究接触如何影响动作，而不只是让模型从 RGB 中猜测接触。</strong></p>
+<p>本笔记以提供的《从 SharpaDex 看触觉双手操作》为基础，补充核对了 <a href="https://huggingface.co/datasets/Sharpa-Robotics/SharpaDex-v1.0">SharpaDex v1.0 官方数据卡</a>（2026-10-22）。文中的实验建议属于研究推演，不是数据集已经验证的结果。</p>
+<h2 id="section-0">1. 数据规模之外，更重要的是模态能对上</h2>
+<p>材料给出的主体规模为 28,993 个 episode、32,396,172 帧，按 30 FPS 折算约 300 小时，覆盖 59 项任务。平台使用两只各有 22 个自由度的 Wave 灵巧手和两条各有 7 个自由度的机械臂。</p>
+<table>
+<thead>
+<tr>
+<th>数据</th>
+<th>可以帮助回答的问题</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>四路 RGB</td>
+<td>物体在哪里，双手正在做什么</td>
+</tr>
+<tr>
+<td>十个指尖的六轴力/力矩，共 60 维</td>
+<td>是否建立接触，受力怎样变化</td>
+</tr>
+<tr>
+<td>触觉形变与原始触觉视频</td>
+<td>接触落在指尖哪里，局部形变如何演变</td>
+</tr>
+<tr>
+<td>机器人状态与动作指令</td>
+<td>给出了什么命令，机器人实际到了哪里</td>
+</tr>
+<tr>
+<td>任务、子任务与技能标注</td>
+<td>当前在完成哪个阶段，如何连接长任务</td>
+</tr>
+</tbody>
+</table>
+<p>同一帧的多模态记录，允许我们固定示范，只改变策略看到的信息。这样才能判断触觉到底增加了什么，而不是把两个来自不同采集条件的数据集放在一起比较。</p>
+<p>数据中有 224,087 个子任务片段、45 类技能标签，细粒度片段约覆盖 89.3% 的帧。标注有助于定位失败阶段，但“抓取”这个文字标签不等于已经稳定抓住；接触状态仍需要从观测和执行结果判断。</p>
+<h2 id="section-1">2. 58 个有效关节维度，不等于文件只有 58 维</h2>
+<p>实际接入时，要区分硬件自由度和存储 schema。官方数据卡给出：<code>action</code> 与 <code>observation.state</code> 均为 <strong>65 维</strong>，前 58 维对应双臂和双手，后 7 维为躯干相关占位。另有 12 维观测 TCP pose 和 12 维指令 TCP pose。24 维 <code>observation.state.tcp</code> 中的力/力矩槽为零，不能拿来替代真实指尖触觉。<a href="https://huggingface.co/datasets/Sharpa-Robotics/SharpaDex-v1.0#feature-schema">数据字段说明</a></p>
+<p>这意味着，不能因为硬件有 58 个有效动作维度，就直接把文件按 58 维解释。训练前应明确切片和归一化方式，避免恒零占位维度影响损失统计。</p>
+<p>TCP 指令与观测也不是同一个量。两者之差可能包含控制跟踪误差、时延和接触阻力。比较前需要先确认时间对齐及坐标约定；旋转误差更不能简单地按普通向量相减。</p>
+<p>官方数据卡仍未完整声明 TCP 单位、参考坐标系和旋转约定。附件评论中“后面会补充”只能说明当时有人提出需求，不能当作标定信息已经发布的证据。<a href="https://huggingface.co/datasets/Sharpa-Robotics/SharpaDex-v1.0#tcp-pose-state-and-action">TCP 说明</a></p>
+<h2 id="section-2">3. wrench 和触觉视频各自提供什么</h2>
+<p>一个指尖的 wrench 可以写成：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi>w</mi><mi>i</mi></msub><mo>=</mo><mo stretchy="false">[</mo><msub><mi>f</mi><mi>x</mi></msub><mo separator="true">,</mo><msub><mi>f</mi><mi>y</mi></msub><mo separator="true">,</mo><msub><mi>f</mi><mi>z</mi></msub><mo separator="true">,</mo><msub><mi>τ</mi><mi>x</mi></msub><mo separator="true">,</mo><msub><mi>τ</mi><mi>y</mi></msub><mo separator="true">,</mo><msub><mi>τ</mi><mi>z</mi></msub><mo stretchy="false">]</mo><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+w_i=[f_x,f_y,f_z,\tau_x,\tau_y,\tau_z].
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.5806em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0269em;">w</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:-0.0269em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1.0361em;vertical-align:-0.2861em;"></span><span class="mopen">[</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1076em;">f</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:-0.1076em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">x</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1076em;">f</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:-0.1076em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0359em;">y</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1076em;">f</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:-0.1076em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.044em;">z</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1132em;">τ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:-0.1132em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">x</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1132em;">τ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:-0.1132em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0359em;">y</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1132em;">τ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:-0.1132em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.044em;">z</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mclose">]</span><span class="mord">.</span></span></span></span></span></eqn></section><p>它把接触压缩成六个数，适合描述合力与合力矩。空间触觉则保留更多局部结构，例如接触斑的位置、面积和形变分布。不同的接触分布可能产生相近的合力，所以两者不一定能互相替代。</p>
+<p>但空间信息更多，也不保证控制效果更好。原始触觉图像可能携带传感器纹理、光照和压缩特征，还需要额外的解码与编码计算。任务若主要依赖接触建立和受力趋势，低维 wrench 可能已经足够。</p>
+<p>一个直接的研究问题是：<strong>触觉视频的收益集中在哪些阶段？</strong> 薄片分离、边缘搜索、局部对齐可能更需要空间信息；保持抓取和调节压力则值得先测试紧凑信号。这是待验证的任务假设。</p>
+<p>此外，力信号可以帮助识别滑移，但它不是现成的滑移真值。物体运动、传感器噪声和主动调整也会造成受力变化，需要额外标注或可验证的判定规则。</p>
+<h2 id="section-3">4. 300 小时里有多少是真正有用的接触</h2>
+<p>附件引用的接触统计约为：195 小时至少一个指尖接触，55 小时双手同时接触。由于材料没有给出完整阈值与判定方法，这里只把它们作为近似规模，不作为复现实验的标准标签。</p>
+<p>还有一个容易忽略的区别：<strong>双手同时接触，不必然意味着双手作用于同一物体。</strong> 两只手可能分别拿着不同物体。研究共享物体的力协调时，需要进一步筛选对象关系和接触阶段。</p>
+<p>任务分布也很不均衡。材料中的熨烫衣物约 21 小时，撬钉子只有约 12 分钟。如果均匀采样帧，大任务会主导更新；如果均匀采样任务，小任务又容易被反复使用。</p>
+<p>一种可测试的折中是按任务数据量做温度采样：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mi>p</mi><mo stretchy="false">(</mo><mi>k</mi><mo stretchy="false">)</mo><mo>=</mo><mfrac><msubsup><mi>n</mi><mi>k</mi><mi>α</mi></msubsup><mrow><munder><mo>∑</mo><mi>j</mi></munder><msubsup><mi>n</mi><mi>j</mi><mi>α</mi></msubsup></mrow></mfrac><mo separator="true">,</mo><mspace width="2em"/><mn>0</mn><mo>≤</mo><mi>α</mi><mo>≤</mo><mn>1.</mn></mrow><annotation encoding="application/x-tex">
+p(k)=\frac{n_k^\alpha}{\sum_j n_j^\alpha},\qquad 0\leq\alpha\leq1.
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal">p</span><span class="mopen">(</span><span class="mord mathnormal" style="margin-right:0.0315em;">k</span><span class="mclose">)</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:2.4632em;vertical-align:-1.1218em;"></span><span class="mord"><span class="mopen nulldelimiter"></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.3414em;"><span style="top:-2.314em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mop"><span class="mop op-symbol small-op" style="position:relative;top:0em;">∑</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.162em;"><span style="top:-2.4003em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0572em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.4358em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal">n</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.6462em;"><span style="top:-2.4231em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0572em;">j</span></span></span><span style="top:-3.0448em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0037em;">α</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.413em;"><span></span></span></span></span></span></span></span></span><span style="top:-3.23em;"><span class="pstrut" style="height:3em;"></span><span class="frac-line" style="border-bottom-width:0.04em;"></span></span><span style="top:-3.677em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord"><span class="mord mathnormal">n</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.6644em;"><span style="top:-2.4169em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0315em;">k</span></span></span><span style="top:-3.063em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0037em;">α</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2831em;"><span></span></span></span></span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:1.1218em;"><span></span></span></span></span></span><span class="mclose nulldelimiter"></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:2em;"></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord">0</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">≤</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.7719em;vertical-align:-0.136em;"></span><span class="mord mathnormal" style="margin-right:0.0037em;">α</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">≤</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.6444em;"></span><span class="mord">1.</span></span></span></span></span></eqn></section><p>这里是通用实验设计：令 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>n</mi><mi>k</mi></msub></mrow><annotation encoding="application/x-tex">n_k</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.5806em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal">n</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0315em;">k</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span></eq> 为任务帧数，<eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>α</mi><mo>=</mo><mn>1</mn></mrow><annotation encoding="application/x-tex">\alpha=1</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.4306em;"></span><span class="mord mathnormal" style="margin-right:0.0037em;">α</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.6444em;"></span><span class="mord">1</span></span></span></span></eq> 按数据量分配概率，<eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>α</mi><mo>=</mo><mn>0</mn></mrow><annotation encoding="application/x-tex">\alpha=0</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.4306em;"></span><span class="mord mathnormal" style="margin-right:0.0037em;">α</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.6444em;"></span><span class="mord">0</span></span></span></span></eq> 则均匀选择任务。选择任务后还要规定如何抽取 episode 和片段。</p>
+<p>接触片段可以适度加权，但不能完全丢掉接近、松手和重新定位。策略需要学会从无接触过渡到接触，也需要在失败后退出接触。</p>
+<h2 id="section-4">5. 公平比较触觉，应该固定哪些东西</h2>
+<p>建议在同一组训练 episode 和测试条件上比较四种输入，均保留相同的本体感知与语言条件：</p>
+<table>
+<thead>
+<tr>
+<th>视觉与触觉输入</th>
+<th>要检验的问题</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RGB</td>
+<td>视觉基线能做到什么</td>
+</tr>
+<tr>
+<td>RGB + wrench</td>
+<td>紧凑受力信号是否足够</td>
+</tr>
+<tr>
+<td>RGB + 触觉视频</td>
+<td>空间接触信息有什么增益</td>
+</tr>
+<tr>
+<td>RGB + wrench + 触觉视频</td>
+<td>两种触觉是否互补</td>
+</tr>
+</tbody>
+</table>
+<p>除了报告整体成功率，还可以按遮挡、扰动、滑移恢复、精细对齐分别统计。否则，大量容易完成的搬运步骤可能掩盖触觉在少数关键接触时刻的作用。</p>
+<p>参数量、训练计算量和部署延迟需要交代清楚。若较大的多模态模型获胜，可以增加等容量视觉基线；若触觉路径更快，也应区分信息增益和反馈频率增益。</p>
+<p>一个有辨识力的对照是延迟或打乱触觉历史：如果精确同步的触觉明显优于错位触觉，才更支持模型利用了实时接触信息。打乱方式应避免跨训练和测试划分，也不能把这种对照当成正常部署条件。</p>
+<h2 id="section-5">6. 时间尺度和数据划分决定结论能不能相信</h2>
+<p>30 FPS 对应约 33.3 ms 的帧间隔。附件提到硬件支持更高采样频率，但公开数据不能凭插值恢复未记录的快速接触事件。插值让曲线更密，不会增加滑移发生瞬间的真实观测。</p>
+<p>同样，共享时间轴也不能自动证明各传感器的物理延迟完全相同。用力变化预测动作时，应检查信号是否经过滤波，以及时间戳对应采样、传输还是落盘时刻。</p>
+<p>官方推荐按 collection season 划分训练和评估。这里更适合理解为<strong>采集批次或会话分组</strong>，而不是自然界的春夏秋冬。相邻帧以及同批次示范可能高度相似，随机拆帧会产生泄漏。<a href="https://huggingface.co/datasets/Sharpa-Robotics/SharpaDex-v1.0#usage-recommendations">划分建议</a></p>
+<p>此外，LeRobot v3.0 和 v2.1 是同一批示范的两种导出，不能相加计算数据规模，更不能把一种格式作为训练集、另一种作为测试集。<a href="https://huggingface.co/datasets/Sharpa-Robotics/SharpaDex-v1.0#dataset-at-a-glance">版本说明</a></p>
+<h2 id="section-6">7. 与四篇相关论文怎样连起来</h2>
+<p>这组工作可以围绕“数据怎样变成接触能力”来读：</p>
+<table>
+<thead>
+<tr>
+<th>笔记</th>
+<th>关注的问题</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="DexTeleop-0.html">DexTeleop-0</a></td>
+<td>采集时怎样修正人手映射，得到更可执行的示范</td>
+</tr>
+<tr>
+<td><a href="HTT.html">HTT</a></td>
+<td>怎样让不同触觉传感器共享表示</td>
+</tr>
+<tr>
+<td><a href="T-Rex.html">T-Rex</a></td>
+<td>策略怎样根据最新触觉及时修正动作</td>
+</tr>
+<tr>
+<td><a href="WM-Craftnet.html">WM-Craftnet</a></td>
+<td>怎样结合动作历史估计持续变化的交互状态</td>
+</tr>
+</tbody>
+</table>
+<p>这些工作提供了互补思路，但不能因为使用相关硬件，就把它们写成已经在 SharpaDex 上完成验证的一套系统。T-Rex 有自己的采集数据；WM-Craftnet 需要深度信息，而 SharpaDex 当前列出的视觉输入是 RGB，要迁移需补足输入或调整模型。</p>
+<p>对 WAM 研究，我更关注一个问题：<strong>模型是否能预测动作之后的接触变化，而不只是下一帧画面？</strong> 可以把未来 wrench、接触建立或失稳事件作为辅助预测目标，再检验这些表示是否改善实际控制。这是值得尝试的方向；触觉预测误差降低，本身还不能替代任务成功率与恢复能力的验证。</p>
+<footer><a href="../index.html#notes">← All notes</a></footer></article></main></body></html>

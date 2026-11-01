@@ -1,0 +1,345 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>RecA：让模型更好地生成自己已经能够理解的视觉内容 · Jieming Li</title><link rel="stylesheet" href="../assets/styles.css"><link rel="stylesheet" href="../assets/notes.css"><link rel="stylesheet" href="vendor/katex/katex.min.css"></head><body class="note-page"><header class="note-nav"><a href="../index.html#notes">← Notes</a><a href="../index.html">Jieming Li</a></header><main class="note-layout"><aside class="note-outline"><p class="eyebrow">On this page</p><nav aria-label="目录"><ol><li><a href="#section-0">1. 先分清 UMM 和 RecA</a></li><li><a href="#section-1">2. 为什么“看懂”与“画对”之间还有差距</a></li><li><a href="#section-2">3. 方法很直接：用视觉语义作为条件重建原图</a></li><li><a href="#section-3">4. 图像条件训练为什么可能改善文本条件生成</a></li><li><a href="#section-4">5. 关键不是重建得越像越好，而是学到可迁移的条件映射</a></li><li><a href="#section-5">6. Caption-free 的准确范围</a></li><li><a href="#section-6">7. 重建损失沿用原模型的生成目标</a></li><li><a href="#section-7">8. 实验数字分开看：模型、配方和预算各有范围</a></li><li><a href="#section-11">9. 和 REPA、Autoencoder 到底差在哪里</a></li><li><a href="#section-12">10. 哪些情况可能无效，甚至退化</a></li><li><a href="#section-13">11. 对视频世界模型和 VLA 的启发</a></li></ol></nav></aside><article class="note-content" id="content"><p class="eyebrow">Research notebook · 研究笔记</p><h1 id="noteTitle">RecA：让模型更好地生成自己已经能够理解的视觉内容</h1>
+<p>一个模型可以看图回答“这是一颗黄色西兰花”，但让它画黄色西兰花时，它仍然可能画成绿色。识别了对象、属性和位置关系，并不意味着生成时能把这些信息准确落实到图像中。</p>
+<p><strong>Reconstruction Alignment（RecA）的做法是，把图像经过理解编码器得到的视觉特征作为生成条件，再让模型重建这张图。它希望通过这项自监督任务，改善已有语义表征到图像输出之间的映射。</strong></p>
+<p>论文：<strong>Reconstruction Alignment Improves Unified Multimodal Models</strong>，Ji Xie、Trevor Darrell、Luke Zettlemoyer、XuDong Wang，UC Berkeley、University of Washington、Duke University，ICLR 2026。<a href="https://arxiv.org/html/2509.07295v4">论文 v4</a>｜<a href="https://reconstruction-alignment.github.io/">项目主页</a>｜<a href="https://github.com/HorizonWind2004/reconstruction-alignment">代码</a>｜<a href="https://github.com/HorizonWind2004/reconstruction-alignment/blob/main/REPRODUCE_GUIDE_CN.md">作者中文复现指南</a></p>
+<p>本文根据提供的解读整理，并对照论文 v4、项目页和复现指南核查。实验数值以这一版本为准；对视频世界模型和 VLA 的连接是后续研究思考。</p>
+<h2 id="section-0">1. 先分清 UMM 和 RecA</h2>
+<p>UMM 是 Unified Multimodal Model，指把多模态理解与生成放进统一框架的模型。以图像为例，它可以同时支持：</p>
+<table>
+<thead>
+<tr>
+<th>任务</th>
+<th>输入</th>
+<th>输出</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>图像理解</td>
+<td>图片和问题</td>
+<td>文字回答</td>
+</tr>
+<tr>
+<td>文本生成图像</td>
+<td>文本描述</td>
+<td>图片</td>
+</tr>
+<tr>
+<td>图像编辑</td>
+<td>原图和编辑指令</td>
+<td>修改后的图片</td>
+</tr>
+</tbody>
+</table>
+<p>“统一”不要求所有任务共用同一个 tokenizer、编码器或输出头。不同 UMM 可以共享主要参数，也可以让理解与生成使用相对独立的模块。</p>
+<p><strong>UMM 是模型范式，RecA 是用于这类模型的后训练方法。</strong> RecA 沿用模型已有的理解与生成通路，不要求重新发明一个图像生成架构。</p>
+<p>UMM 也不等于 VLA。VLA 通常从视觉、语言等条件输出机器人动作；这里讨论的 UMM 主要理解和生成多模态内容。它们可以组合，但模型输出、训练目标与评估任务不同。</p>
+<h2 id="section-1">2. 为什么“看懂”与“画对”之间还有差距</h2>
+<p>传统图文训练用 caption 描述图像，再让模型学习根据文字生成图片。但 caption 经常省略信息：物体颜色、具体数量、相对位置、细节形状和背景布局，不一定都被写出来。</p>
+<p>例如训练文字只说“一颗西兰花”，图中恰好通常是绿色，模型就可能过度依赖常见搭配。遇到“黄色西兰花”时，即便理解路径能够识别这种组合，生成路径仍可能倾向默认外观。</p>
+<p>作者的想法是：视觉理解编码器已经能提取很多 caption 没有表达的内容，能否直接拿这些特征作为更丰富的生成条件？</p>
+<p>这里需要区分两件事：</p>
+<ul>
+<li><strong>条件提供了多少信息</strong>：视觉特征有机会保留文字省略的细节。</li>
+<li><strong>模型能否利用这些信息</strong>：把特征送进生成器，并不保证生成器已经学会解读它们。</li>
+</ul>
+<p>RecA 主要训练第二件事。它不声称视觉编码器保存了原图的所有信息，也没有证明 caption 稀疏是理解—生成差距的唯一原因。<a href="https://arxiv.org/html/2509.07295v4#S2">动机与方法</a></p>
+<h2 id="section-2">3. 方法很直接：用视觉语义作为条件重建原图</h2>
+<p>设原图为 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>x</mi></mrow><annotation encoding="application/x-tex">x</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.4306em;"></span><span class="mord mathnormal">x</span></span></span></span></eq>，理解编码器为 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>E</mi><mi>v</mi></msub></mrow><annotation encoding="application/x-tex">E_v</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0576em;">E</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:-0.0576em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0359em;">v</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span></eq>，重建任务模板为 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>t</mi><mrow><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">p</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi></mrow></msub></mrow><annotation encoding="application/x-tex">t_{\mathrm{template}}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.9012em;vertical-align:-0.2861em;"></span><span class="mord"><span class="mord mathnormal">t</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">template</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span></span></span></span></eq>。首先计算：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi>h</mi><mi>v</mi></msub><mo>=</mo><msub><mi>E</mi><mi>v</mi></msub><mo stretchy="false">(</mo><mi>x</mi><mo stretchy="false">)</mo><mo separator="true">,</mo><mspace width="2em"/><mi>c</mi><mo>=</mo><mi mathvariant="normal">concat</mi><mo>⁡</mo><mo stretchy="false">(</mo><msub><mi>t</mi><mrow><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">p</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi></mrow></msub><mo separator="true">,</mo><msub><mi>h</mi><mi>v</mi></msub><mo stretchy="false">)</mo><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+h_v=E_v(x),
+\qquad
+c=\operatorname{concat}(t_{\mathrm{template}},h_v).
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8444em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal">h</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0359em;">v</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0576em;">E</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:-0.0576em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0359em;">v</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mopen">(</span><span class="mord mathnormal">x</span><span class="mclose">)</span><span class="mpunct">,</span><span class="mspace" style="margin-right:2em;"></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal">c</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1.0361em;vertical-align:-0.2861em;"></span><span class="mop"><span class="mord mathrm">concat</span></span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal">t</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">template</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal">h</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0359em;">v</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mclose">)</span><span class="mord">.</span></span></span></span></span></eqn></section><p>然后用已有生成通路根据 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>c</mi></mrow><annotation encoding="application/x-tex">c</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.4306em;"></span><span class="mord mathnormal">c</span></span></span></span></eq> 重建原图：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi mathvariant="script">L</mi><mrow><mi mathvariant="normal">R</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">A</mi></mrow></msub><mo>=</mo><msub><mi mathvariant="script">L</mi><mrow><mi mathvariant="normal">g</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">n</mi></mrow></msub><mo fence="true" stretchy="true" minsize="1.2em" maxsize="1.2em">(</mo><msub><mi>G</mi><mi>θ</mi></msub><mo stretchy="false">(</mo><mi>c</mi><mo stretchy="false">)</mo><mo separator="true">,</mo><mi>x</mi><mo fence="true" stretchy="true" minsize="1.2em" maxsize="1.2em">)</mo><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+\mathcal L_{\mathrm{RecA}}
+=\mathcal L_{\mathrm{gen}}\bigl(G_\theta(c),x\bigr).
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathcal">L</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3283em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">RecA</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1.2em;vertical-align:-0.35em;"></span><span class="mord"><span class="mord mathcal">L</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">gen</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span><span class="mopen"><span class="delimsizing size1">(</span></span><span class="mord"><span class="mord mathnormal">G</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0278em;">θ</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mopen">(</span><span class="mord mathnormal">c</span><span class="mclose">)</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal">x</span><span class="mclose"><span class="delimsizing size1">)</span></span><span class="mord">.</span></span></span></span></span></eqn></section><p>这是任务层面的抽象，省略了扩散噪声、图像 latent 或离散 token 等模型内部细节。损失使用该模型原有的生成训练目标。</p>
+<figure class="diagram"><pre class="mermaid">flowchart LR
+    A[训练图像] --&gt; B[理解编码器]
+    B --&gt; C[视觉语义特征]
+    D[重建任务模板] --&gt; E[已有 UMM 生成通路]
+    C --&gt; E
+    E --&gt; F[图像生成目标或预测]
+    A --&gt; G[原图作为监督]
+    F --&gt; H[计算生成损失]
+    G --&gt; H
+</pre><details><summary>Diagram source</summary><pre>flowchart LR
+    A[训练图像] --&gt; B[理解编码器]
+    B --&gt; C[视觉语义特征]
+    D[重建任务模板] --&gt; E[已有 UMM 生成通路]
+    C --&gt; E
+    E --&gt; F[图像生成目标或预测]
+    A --&gt; G[原图作为监督]
+    F --&gt; H[计算生成损失]
+    G --&gt; H
+</pre></details></figure><p>训练中，原图同时提供条件来源与监督目标。这属于自监督重建的任务设计。要验证迁移收益，测试时则回到原本的接口：T2I 只提供文本，图像编辑提供源图和编辑指令，不额外提供目标图的视觉 embedding。</p>
+<p>所以，训练中的重建成功只能说明模型能够利用视觉条件；真正重要的结果，是没有目标图特征时，文本生成与编辑是否也改善。</p>
+<h2 id="section-3">4. 图像条件训练为什么可能改善文本条件生成</h2>
+<p>RecA 建立在已经预训练的 UMM 上。该模型原本就具有一定的图文语义对应关系，视觉条件和文本条件经过模型后，会使用部分共享的表示与生成参数。</p>
+<p>如果视觉特征比 caption 更充分地表达了对象属性与布局，重建训练就可能迫使生成通路更准确地利用这些语义。随后，文本条件调用相同的生成能力，也可能受益。</p>
+<p>可以将两项任务写成：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi>p</mi><mi>θ</mi></msub><mo stretchy="false">(</mo><mi>x</mi><mo>∣</mo><msub><mi>E</mi><mi>v</mi></msub><mo stretchy="false">(</mo><mi>x</mi><mo stretchy="false">)</mo><mo stretchy="false">)</mo><mspace width="1em"/><mo>⟶</mo><mspace width="1em"/><msub><mi>p</mi><mi>θ</mi></msub><mo stretchy="false">(</mo><mi>x</mi><mo>∣</mo><mi>t</mi><mo stretchy="false">)</mo><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+p_\theta(x\mid E_v(x))
+\quad\longrightarrow\quad
+p_\theta(x\mid t).
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord"><span class="mord mathnormal">p</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0278em;">θ</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mopen">(</span><span class="mord mathnormal">x</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">∣</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0576em;">E</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:-0.0576em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0359em;">v</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mopen">(</span><span class="mord mathnormal">x</span><span class="mclose">))</span><span class="mspace" style="margin-right:1em;"></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">⟶</span><span class="mspace" style="margin-right:1em;"></span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord"><span class="mord mathnormal">p</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0278em;">θ</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mopen">(</span><span class="mord mathnormal">x</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">∣</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal">t</span><span class="mclose">)</span><span class="mord">.</span></span></span></span></span></eqn></section><p>这里的箭头表示希望发生的能力迁移，不是两个分布相等，也不是必然成立的数学推论。</p>
+<p>迁移至少依赖三个条件：理解特征保留了有用语义，模型能够将其接入生成通路，训练更新又没有破坏文本条件原本使用的表示。</p>
+<p>论文用深层特征可视化，以及重建失败与文本生成失败的对应例子来支持这种解释。但 PCA 接近、失败案例相关，都不足以单独证明严格的因果机制。<a href="https://arxiv.org/html/2509.07295v4#A4">机制分析，Appendix D</a></p>
+<p>更准确的理解是：<strong>实验表明这项训练任务可以迁移，语义映射改善是作者提出并用分析支持的解释。</strong></p>
+<h2 id="section-4">5. 关键不是重建得越像越好，而是学到可迁移的条件映射</h2>
+<p>如果输入与输出是高度一致的图像 token，模型可能直接复制它们。重建损失迅速下降，并不意味着它更会根据文字生成。</p>
+<p>作者因此强调语义信息瓶颈：让条件保留对象、属性和布局等信息，同时减少对输出像素或 token 的直接复制通路。</p>
+<p>一种实现方式是降低理解编码器的输入分辨率。例如 BAGEL 可以用 224×224 的条件图像特征，重建更高分辨率的目标图像。</p>
+<p>论文 Table 7 的 BAGEL 对比如下。GenEval 统一按百分数展示：</p>
+<table>
+<thead>
+<tr>
+<th>重建条件</th>
+<th>条件分辨率</th>
+<th style="text-align:right">GenEval</th>
+<th style="text-align:right">DPG-Bench</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>原始模型</td>
+<td>—</td>
+<td style="text-align:right">78.8</td>
+<td style="text-align:right">84.03</td>
+</tr>
+<tr>
+<td>VAE 生成编码特征</td>
+<td>256×256</td>
+<td style="text-align:right">78.5</td>
+<td style="text-align:right">83.92</td>
+</tr>
+<tr>
+<td>ViT 理解特征</td>
+<td>224×224</td>
+<td style="text-align:right">82.4</td>
+<td style="text-align:right">85.29</td>
+</tr>
+<tr>
+<td>ViT 理解特征</td>
+<td>512×512</td>
+<td style="text-align:right">79.2</td>
+<td style="text-align:right">84.61</td>
+</tr>
+</tbody>
+</table>
+<p>这组实验支持：在这个模型与设置下，低分辨率理解特征比另外两种条件更有利于文本生成迁移。<a href="https://arxiv.org/html/2509.07295v4#S3.SS5">编码器与分辨率消融</a></p>
+<p>它不说明高分辨率特征总是不好，也不说明 VAE 条件在所有指标上都无效。原表中 VAE 条件的部分编辑指标仍有提升，说明不同目标可能受益于不同信息。</p>
+<p>“降低分辨率”也要有下限。过度压缩会丢掉对象与布局信息，或让输入偏离模型熟悉的分布。复现时要检查条件与目标之间到底有什么瓶颈，而不是机械地把所有模型都缩到 224×224。</p>
+<p>作者指南还提供 360 种重建模板。模板多样性对不同模型的影响不同，它是减少指令形式过拟合的实现选择，不能视为全部架构上固定幅度的收益。<a href="https://github.com/HorizonWind2004/reconstruction-alignment/blob/main/REPRODUCE_GUIDE_CN.md">复现指南</a></p>
+<h2 id="section-5">6. Caption-free 的准确范围</h2>
+<p>RecA 重建目标不需要每张图片的 caption，但完整后训练配方还要考虑理解能力是否被遗忘。</p>
+<p>论文将总目标写成：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi mathvariant="script">L</mi><mrow><mi mathvariant="normal">t</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">l</mi></mrow></msub><mo>=</mo><msub><mi>λ</mi><mi>R</mi></msub><msub><mi mathvariant="script">L</mi><mrow><mi mathvariant="normal">R</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">A</mi></mrow></msub><mo>+</mo><msub><mi>λ</mi><mi>U</mi></msub><msub><mi mathvariant="script">L</mi><mrow><mi mathvariant="normal">I</mi><mn>2</mn><mi mathvariant="normal">T</mi></mrow></msub><mo>+</mo><msub><mi>λ</mi><mi>G</mi></msub><msub><mi mathvariant="script">L</mi><mrow><mi mathvariant="normal">T</mi><mn>2</mn><mi mathvariant="normal">I</mi></mrow></msub><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+\mathcal L_{\mathrm{total}}
+=\lambda_R\mathcal L_{\mathrm{RecA}}
++\lambda_U\mathcal L_{\mathrm{I2T}}
++\lambda_G\mathcal L_{\mathrm{T2I}}.
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathcal">L</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">total</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.8444em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal">λ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3283em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0077em;">R</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mord"><span class="mord mathcal">L</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3283em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">RecA</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.8444em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal">λ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3283em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.109em;">U</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mord"><span class="mord mathcal">L</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3283em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">I2T</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.8444em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal">λ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3283em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">G</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mord"><span class="mord mathcal">L</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3283em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">T2I</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mord">.</span></span></span></span></span></eqn></section><p>RecA 阶段设 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>λ</mi><mi>R</mi></msub><mo>=</mo><mn>1</mn></mrow><annotation encoding="application/x-tex">\lambda_R=1</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8444em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal">λ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3283em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0077em;">R</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.6444em;"></span><span class="mord">1</span></span></span></span></eq>、<eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>λ</mi><mi>G</mi></msub><mo>=</mo><mn>0</mn></mrow><annotation encoding="application/x-tex">\lambda_G=0</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8444em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal">λ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3283em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">G</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.6444em;"></span><span class="mord">0</span></span></span></span></eq>，再根据架构决定是否保留 I2T：</p>
+<table>
+<thead>
+<tr>
+<th>架构情况</th>
+<th>理解侧处理</th>
+<th>RecA 阶段目标</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>理解与生成共享参数，如 Show-o、Harmon</td>
+<td>保留图像到文字的训练来维持理解能力</td>
+<td>重建 + I2T，<eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>λ</mi><mi>U</mi></msub><mo>=</mo><mn>1</mn></mrow><annotation encoding="application/x-tex">\lambda_U=1</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8444em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal">λ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3283em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.109em;">U</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.6444em;"></span><span class="mord">1</span></span></span></span></eq></td>
+</tr>
+<tr>
+<td>理解与生成可以解耦，如 OpenUni、BAGEL</td>
+<td>冻结理解组件，更新生成相关参数</td>
+<td>重建，<eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>λ</mi><mi>U</mi></msub><mo>=</mo><mn>0</mn></mrow><annotation encoding="application/x-tex">\lambda_U=0</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8444em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal">λ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3283em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.109em;">U</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.6444em;"></span><span class="mord">0</span></span></span></span></eq></td>
+</tr>
+</tbody>
+</table>
+<p>这里的 I2T 可以包含视觉问答等理解任务，不必等同于为重建图片再写一条 caption。<a href="https://arxiv.org/html/2509.07295v4#S2.SS2">训练目标</a></p>
+<p>冻结一个视觉编码器，也不一定冻结了完整理解能力。如果理解与生成仍共享后面的 Transformer，生成训练就可能改变理解路径使用的参数，因此仍需要检查共享模块和保留训练的作用。</p>
+<p>同样，<eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>λ</mi><mi>G</mi></msub><mo>=</mo><mn>0</mn></mrow><annotation encoding="application/x-tex">\lambda_G=0</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8444em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal">λ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3283em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">G</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.6444em;"></span><span class="mord">0</span></span></span></span></eq> 描述的是 RecA 后训练阶段。基础模型早先的图文训练，以及某些实验额外进行的 SFT，不会因此变成“完全没有文本监督”。</p>
+<h2 id="section-6">7. 重建损失沿用原模型的生成目标</h2>
+<p>RecA 改变了条件信号与训练任务，不要求所有架构使用同一种像素误差。</p>
+<p>例如，对噪声预测扩散模型，目标图像先编码为 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>z</mi><mn>0</mn></msub></mrow><annotation encoding="application/x-tex">z_0</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.5806em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.044em;">z</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:-0.044em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">0</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span></eq>，再加噪：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi>z</mi><mi>t</mi></msub><mo>=</mo><msqrt><msub><mover accent="true"><mi>α</mi><mo>ˉ</mo></mover><mi>t</mi></msub></msqrt><mtext> </mtext><msub><mi>z</mi><mn>0</mn></msub><mo>+</mo><msqrt><mrow><mn>1</mn><mo>−</mo><msub><mover accent="true"><mi>α</mi><mo>ˉ</mo></mover><mi>t</mi></msub></mrow></msqrt><mtext> </mtext><mi>ϵ</mi><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+z_t=\sqrt{\bar\alpha_t}\,z_0
++\sqrt{1-\bar\alpha_t}\,\epsilon.
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.5806em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.044em;">z</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:-0.044em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1.04em;vertical-align:-0.1972em;"></span><span class="mord sqrt"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.8428em;"><span class="svg-align" style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span class="mord" style="padding-left:0.833em;"><span class="mord"><span class="mord katex-accent"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.5678em;"><span style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span class="mord mathnormal" style="margin-right:0.0037em;">α</span></span><span style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span class="accent-body" style="left:-0.2222em;"><span class="mord">ˉ</span></span></span></span></span></span></span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:-0.0037em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span><span style="top:-2.8028em;"><span class="pstrut" style="height:3em;"></span><span class="hide-tail" style="min-width:0.853em;height:1.08em;"><svg xmlns="http://www.w3.org/2000/svg" width="400em" height="1.08em" viewBox="0 0 400000 1080" preserveAspectRatio="xMinYMin slice"><path d="M95,702
+c-2.7,0,-7.17,-2.7,-13.5,-8c-5.8,-5.3,-9.5,-10,-9.5,-14
+c0,-2,0.3,-3.3,1,-4c1.3,-2.7,23.83,-20.7,67.5,-54
+c44.2,-33.3,65.8,-50.3,66.5,-51c1.3,-1.3,3,-2,5,-2c4.7,0,8.7,3.3,12,10
+s173,378,173,378c0.7,0,35.3,-71,104,-213c68.7,-142,137.5,-285,206.5,-429
+c69,-144,104.5,-217.7,106.5,-221
+l0 -0
+c5.3,-9.3,12,-14,20,-14
+H400000v40H845.2724
+s-225.272,467,-225.272,467s-235,486,-235,486c-2.7,4.7,-9,7,-19,7
+c-6,0,-10,-1,-12,-3s-194,-422,-194,-422s-65,47,-65,47z
+M834 80h400000v40h-400000z"/></svg></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.1972em;"><span></span></span></span></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.044em;">z</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:-0.044em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">0</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1.04em;vertical-align:-0.1589em;"></span><span class="mord sqrt"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.8811em;"><span class="svg-align" style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span class="mord" style="padding-left:0.833em;"><span class="mord">1</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mord"><span class="mord katex-accent"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.5678em;"><span style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span class="mord mathnormal" style="margin-right:0.0037em;">α</span></span><span style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span class="accent-body" style="left:-0.2222em;"><span class="mord">ˉ</span></span></span></span></span></span></span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:-0.0037em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span><span style="top:-2.8411em;"><span class="pstrut" style="height:3em;"></span><span class="hide-tail" style="min-width:0.853em;height:1.08em;"><svg xmlns="http://www.w3.org/2000/svg" width="400em" height="1.08em" viewBox="0 0 400000 1080" preserveAspectRatio="xMinYMin slice"><path d="M95,702
+c-2.7,0,-7.17,-2.7,-13.5,-8c-5.8,-5.3,-9.5,-10,-9.5,-14
+c0,-2,0.3,-3.3,1,-4c1.3,-2.7,23.83,-20.7,67.5,-54
+c44.2,-33.3,65.8,-50.3,66.5,-51c1.3,-1.3,3,-2,5,-2c4.7,0,8.7,3.3,12,10
+s173,378,173,378c0.7,0,35.3,-71,104,-213c68.7,-142,137.5,-285,206.5,-429
+c69,-144,104.5,-217.7,106.5,-221
+l0 -0
+c5.3,-9.3,12,-14,20,-14
+H400000v40H845.2724
+s-225.272,467,-225.272,467s-235,486,-235,486c-2.7,4.7,-9,7,-19,7
+c-6,0,-10,-1,-12,-3s-194,-422,-194,-422s-65,47,-65,47z
+M834 80h400000v40h-400000z"/></svg></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.1589em;"><span></span></span></span></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal">ϵ</span><span class="mord">.</span></span></span></span></span></eqn></section><p>以视觉特征和模板组成的 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>c</mi></mrow><annotation encoding="application/x-tex">c</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.4306em;"></span><span class="mord mathnormal">c</span></span></span></span></eq> 为条件，可以使用：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi mathvariant="script">L</mi><mrow><mi mathvariant="normal">R</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">A</mi></mrow></msub><mo>=</mo><msub><mi mathvariant="double-struck">E</mi><mrow><mi>x</mi><mo separator="true">,</mo><mi>t</mi><mo separator="true">,</mo><mi>ϵ</mi></mrow></msub><mrow><mo fence="true">[</mo><mi mathvariant="normal">∥</mi><mi>ϵ</mi><mo>−</mo><msub><mi>ϵ</mi><mi>θ</mi></msub><mo stretchy="false">(</mo><msub><mi>z</mi><mi>t</mi></msub><mo separator="true">,</mo><mi>t</mi><mo separator="true">,</mo><mi>c</mi><mo stretchy="false">)</mo><msubsup><mi mathvariant="normal">∥</mi><mn>2</mn><mn>2</mn></msubsup><mo fence="true">]</mo></mrow><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+\mathcal L_{\mathrm{RecA}}
+=\mathbb E_{x,t,\epsilon}
+\left[\|\epsilon-\epsilon_\theta(z_t,t,c)\|_2^2\right].
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathcal">L</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3283em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">RecA</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1.2141em;vertical-align:-0.35em;"></span><span class="mord"><span class="mord mathbb">E</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">x</span><span class="mpunct mtight">,</span><span class="mord mathnormal mtight">t</span><span class="mpunct mtight">,</span><span class="mord mathnormal mtight">ϵ</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="minner"><span class="mopen delimcenter" style="top:0em;"><span class="delimsizing size1">[</span></span><span class="mord">∥</span><span class="mord mathnormal">ϵ</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mord"><span class="mord mathnormal">ϵ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0278em;">θ</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.044em;">z</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:-0.044em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal">t</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal">c</span><span class="mclose">)</span><span class="mord"><span class="mord">∥</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.8641em;"><span style="top:-2.453em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">2</span></span></span><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">2</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.247em;"><span></span></span></span></span></span></span><span class="mclose delimcenter" style="top:0em;"><span class="delimsizing size1">]</span></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord">.</span></span></span></span></span></eqn></section><p>这只是噪声预测参数化下的示例。Flow Matching 模型继续学习速度场，离散生成模型可继续使用 token 交叉熵。</p>
+<p>训练也不一定每一步都完整生成图片，再计算输出图片的逐像素误差。理解这一点，才能看清方法为什么能接入不同的生成架构。</p>
+<h2 id="section-7">8. 实验数字分开看：模型、配方和预算各有范围</h2>
+<p>论文主要评估 Show-o、Harmon、OpenUni、BAGEL。下面列出与附件对应的关键结果：<a href="https://reconstruction-alignment.github.io/#results">项目实验汇总</a></p>
+<table>
+<thead>
+<tr>
+<th>模型与配方</th>
+<th>指标</th>
+<th>基线 → 后训练</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Harmon-1.5B + RecA，不使用 GPT-4o-Image 蒸馏数据</td>
+<td>GenEval</td>
+<td>0.73 → 0.86</td>
+</tr>
+<tr>
+<td>同上</td>
+<td>DPG-Bench</td>
+<td>80.93 → 87.21</td>
+</tr>
+<tr>
+<td>BAGEL + RecA</td>
+<td>ImgEdit overall</td>
+<td>3.38 → 3.75</td>
+</tr>
+<tr>
+<td>同上</td>
+<td>GEdit-Bench-EN overall</td>
+<td>6.94 → 7.27</td>
+</tr>
+<tr>
+<td>Harmon，额外蒸馏数据 SFT 后再 RecA</td>
+<td>GenEval / DPG-Bench</td>
+<td>最终 0.90 / 88.15</td>
+</tr>
+</tbody>
+</table>
+<p>最后一行是不同的训练配方，不能归为仅增加无 caption 重建所取得的结果。GEdit 的早期材料有 7.25，本笔记采用论文 v4 和当前项目页的 7.27。</p>
+<h3 id="section-8">8.1 27 GPU-hours 对应 BAGEL</h3>
+<p>项目页明确将 27 A100 GPU-hours 对应到 BAGEL：6 张 A100、4.5 小时，使用 10,000 张无标注图片、训练 1,000 步。</p>
+<p>因此，不应把摘要并列出现的预算与 Harmon 最高分拼成“27 GPU-hours 就把 Harmon 提升到 0.90”。比较成本时，还要区分本次后训练与基础模型早先预训练的投入。<a href="https://reconstruction-alignment.github.io/paper.html">作者对实验范围的说明</a></p>
+<h3 id="section-9">8.2 哪些能力改善得更明显</h3>
+<p>Harmon-1.5B 的 GenEval 子任务结果为：</p>
+<table>
+<thead>
+<tr>
+<th>子任务</th>
+<th style="text-align:right">基线</th>
+<th style="text-align:right">RecA</th>
+<th style="text-align:right">提升</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Position</td>
+<td style="text-align:right">44.9</td>
+<td style="text-align:right">75.7</td>
+<td style="text-align:right">30.8 个百分点</td>
+</tr>
+<tr>
+<td>Color Attribution</td>
+<td style="text-align:right">51.1</td>
+<td style="text-align:right">76.6</td>
+<td style="text-align:right">25.5 个百分点</td>
+</tr>
+<tr>
+<td>Counting</td>
+<td style="text-align:right">68.7</td>
+<td style="text-align:right">71.4</td>
+<td style="text-align:right">2.7 个百分点</td>
+</tr>
+</tbody>
+</table>
+<p>这组结果更支持空间关系与属性绑定改善。计数收益较小，说明更好的语义重建没有自动解决所有组合生成问题。<a href="https://arxiv.org/html/2509.07295v4#S3">Table 2</a></p>
+<h3 id="section-10">8.3 理解能力主要是保持，而非全面增强</h3>
+<p>论文 Table 4 中，Harmon 的 MME 从 1195 到 1223，GQA 则从 58.8 到 58.4，其他指标也有小幅升降。它们不支持“所有理解能力一起提升”的结论。RecA 的主要证据集中在生成和编辑。</p>
+<p>还要考虑评估口径：生成一致性基准、视觉问答和编辑评分衡量的能力不同。某个基准超过更大模型，不能直接转化为整体能力排名。</p>
+<h2 id="section-11">9. 和 REPA、Autoencoder 到底差在哪里</h2>
+<table>
+<thead>
+<tr>
+<th>方法</th>
+<th>训练时要求什么</th>
+<th>主要关注的映射</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Autoencoder</td>
+<td>从编码重建输入</td>
+<td>输入 → 压缩表示 → 输入</td>
+</tr>
+<tr>
+<td>REPA</td>
+<td>生成网络的中间特征接近预训练视觉表征</td>
+<td>生成侧隐藏状态 → 外部语义特征</td>
+</tr>
+<tr>
+<td>RecA</td>
+<td>根据模型已有的理解特征生成原图</td>
+<td>理解特征 → 图像输出，并迁移到原有生成任务</td>
+</tr>
+</tbody>
+</table>
+<p>REPA 可以概念性表示为：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi mathvariant="script">L</mi><mrow><mi mathvariant="normal">a</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">g</mi><mi mathvariant="normal">n</mi></mrow></msub><mo>=</mo><mi>d</mi><mo fence="true" stretchy="true" minsize="1.2em" maxsize="1.2em">(</mo><mi>P</mi><mo stretchy="false">(</mo><msub><mi>h</mi><mrow><mi mathvariant="normal">d</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">s</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi></mrow></msub><mo stretchy="false">)</mo><mo separator="true">,</mo><msub><mi>E</mi><mrow><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">h</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi></mrow></msub><mo stretchy="false">(</mo><mi>x</mi><mo stretchy="false">)</mo><mo fence="true" stretchy="true" minsize="1.2em" maxsize="1.2em">)</mo><mo separator="true">,</mo></mrow><annotation encoding="application/x-tex">
+\mathcal L_{\mathrm{align}}
+=d\bigl(P(h_{\mathrm{denoiser}}),E_{\mathrm{teacher}}(x)\bigr),
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.9694em;vertical-align:-0.2861em;"></span><span class="mord"><span class="mord mathcal">L</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">align</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1.2em;vertical-align:-0.35em;"></span><span class="mord mathnormal">d</span><span class="mopen"><span class="delimsizing size1">(</span></span><span class="mord mathnormal" style="margin-right:0.1389em;">P</span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal">h</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">denoiser</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mclose">)</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0576em;">E</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:-0.0576em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">teacher</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mopen">(</span><span class="mord mathnormal">x</span><span class="mclose">)</span><span class="mclose"><span class="delimsizing size1">)</span></span><span class="mpunct">,</span></span></span></span></span></eqn></section><p>其中 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>P</mi></mrow><annotation encoding="application/x-tex">P</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord mathnormal" style="margin-right:0.1389em;">P</span></span></span></span></eq> 为投影，<eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>d</mi></mrow><annotation encoding="application/x-tex">d</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6944em;"></span><span class="mord mathnormal">d</span></span></span></span></eq> 为表示对齐目标。这是通用示意，不把具体实现限定成像素 MSE。REPA 利用外部视觉编码器指导生成网络的内部表示。<a href="https://arxiv.org/abs/2410.06940">REPA 原论文</a></p>
+<p>RecA 则把视觉特征作为输入条件，用原本的生成目标训练输出。它不需要为这个任务额外设计一套表示匹配投影头。</p>
+<p>RecA 与 autoencoder 确实共享重建结构，差别主要在用途与评估：RecA 使用已有 UMM 的语义接口做后训练，并以文本生成、编辑等原有任务是否获益来判断成功。只把输入重建得很好，还不足以完成它的目标。</p>
+<h2 id="section-12">10. 哪些情况可能无效，甚至退化</h2>
+<p><strong>输入条件可以直接复制。</strong> 同构、高保真的输入输出 token 可能形成捷径。此时重建损失很好看，语义到图像的映射却没有获得有效训练。</p>
+<p><strong>共享理解能力被破坏。</strong> 如果生成更新改变了理解路径，却没有对应的冻结或保留训练，原本可以被生成器利用的语义接口也会漂移。</p>
+<p><strong>训练图像与基座分布不合适。</strong> 不需要 caption，不代表任意图像集合都同样适用。图像质量、内容分布和基座原本的训练范围仍然影响后训练。</p>
+<p><strong>基座已经具备很强的重建能力。</strong> 论文报告，BLIP-3o 上额外 RecA 没有带来预期收益，重建还出现退化。作者将其与已有重建训练联系起来，但这一解释仍属于机制推断。<a href="https://arxiv.org/html/2509.07295v4#A7">局限，Appendix G</a></p>
+<p><strong>基准分布与训练数据重叠。</strong> 论文专门分析了部分蒸馏数据与 GenEval 模板的重合。因此，判断迁移能力时，应看清洗后的数据、其他基准以及训练配方，不能只比较一个最高分。<a href="https://arxiv.org/html/2509.07295v4#A6.SS1">模板重合分析</a></p>
+<p>这些边界也说明，“让模型画出已经理解的概念”是方法动机，不是已经证明内部知识完全不变、只提高利用效率。实际参数更新可能同时改变表示与解码行为，需要更细的实验来区分。</p>
+<h2 id="section-13">11. 对视频世界模型和 VLA 的启发</h2>
+<p>以下是研究建议，原论文没有验证机器人控制或视频 rollout 的收益。</p>
+<h3 id="section-14">11.1 重建状态与预测状态转移要分开</h3>
+<p>RecA 主要学习当前图像的语义到图像映射。视频世界模型还需要根据动作预测未来：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mover accent="true"><mi>o</mi><mo>^</mo></mover><mrow><mi>t</mi><mo>+</mo><mn>1</mn><mo>:</mo><mi>t</mi><mo>+</mo><mi>H</mi></mrow></msub><mo>=</mo><msub><mi>G</mi><mi>θ</mi></msub><mo fence="true" stretchy="true" minsize="1.2em" maxsize="1.2em">(</mo><msub><mi>E</mi><mi>v</mi></msub><mo stretchy="false">(</mo><msub><mi>o</mi><mrow><mo>≤</mo><mi>t</mi></mrow></msub><mo stretchy="false">)</mo><mo separator="true">,</mo><msub><mi>a</mi><mrow><mi>t</mi><mo>:</mo><mi>t</mi><mo>+</mo><mi>H</mi><mo>−</mo><mn>1</mn></mrow></msub><mo fence="true" stretchy="true" minsize="1.2em" maxsize="1.2em">)</mo><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+\hat o_{t+1:t+H}
+=G_\theta\bigl(E_v(o_{\leq t}),a_{t:t+H-1}\bigr).
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.9028em;vertical-align:-0.2083em;"></span><span class="mord"><span class="mord katex-accent"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.6944em;"><span style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span class="mord mathnormal">o</span></span><span style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span class="accent-body" style="left:-0.1944em;"><span class="mord">^</span></span></span></span></span></span></span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3283em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">t</span><span class="mbin mtight">+</span><span class="mord mtight">1</span><span class="mrel mtight">:</span><span class="mord mathnormal mtight">t</span><span class="mbin mtight">+</span><span class="mord mathnormal mtight" style="margin-right:0.0813em;">H</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2083em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1.2em;vertical-align:-0.35em;"></span><span class="mord"><span class="mord mathnormal">G</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0278em;">θ</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mopen"><span class="delimsizing size1">(</span></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0576em;">E</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:-0.0576em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0359em;">v</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal">o</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2952em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mrel mtight">≤</span><span class="mord mathnormal mtight">t</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2452em;"><span></span></span></span></span></span></span><span class="mclose">)</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal">a</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3283em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">t</span><span class="mrel mtight">:</span><span class="mord mathnormal mtight">t</span><span class="mbin mtight">+</span><span class="mord mathnormal mtight" style="margin-right:0.0813em;">H</span><span class="mbin mtight">−</span><span class="mord mtight">1</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2083em;"><span></span></span></span></span></span></span><span class="mclose"><span class="delimsizing size1">)</span></span><span class="mord">.</span></span></span></span></span></eqn></section><p>历史特征告诉模型当前发生了什么，动作条件告诉它接下来施加什么干预。仅凭静态重建，没有足够监督来学习碰撞、摩擦或运动响应。</p>
+<p>一种可测的组合是：保留动作条件未来预测，再增加当前状态的语义重建辅助目标。重建负责改善状态信息向视觉输出的表达，未来预测负责学习转移。</p>
+<p>特别要防止把未来目标帧的理解特征送进本应预测未来的条件通路。它可以作为独立训练任务或监督，但如果未来信息在部署时不可获得，不能混入动力学预测的输入。</p>
+<h3 id="section-15">11.2 信息瓶颈应当保留任务需要的细节</h3>
+<p>图像生成中的低分辨率瓶颈可能帮助去除复制捷径；机器人任务却可能依赖细小孔位、物体边缘和微弱接触变化。直接照搬压缩强度，可能损伤控制需要的精度。</p>
+<p>因此，应该同时测试对象身份、空间关系与精细几何，而不只看重建视觉上是否自然。与 <a href="WAM%E8%AE%AD%E7%BB%83%E5%8F%82%E8%80%83VPP2.html">WAM 训练参考：VPP2</a> 的讨论相连，视频质量还必须服务于指令和动作目标。</p>
+<h3 id="section-16">11.3 用对照实验验证真正的控制价值</h3>
+<p>可以在相同视频数据与训练预算下比较：仅未来预测、加入高保真重建、加入带瓶颈的语义重建。</p>
+<p>评估分为三个层次：</p>
+<ul>
+<li><strong>表征与图像层</strong>：对象身份、颜色绑定、相对位置是否更稳定。</li>
+<li><strong>动态层</strong>：不同动作是否产生正确的未来差异，多步误差是否减少。</li>
+<li><strong>控制层</strong>：规划选择和实际任务成功率是否改善，精细操作是否受损。</li>
+</ul>
+<p>只有第一层提高，说明视觉表达更好；要声称世界模型或 VLA 更有效，还需要后两层证据。</p>
+<p>RecA 最值得借鉴的研究思路，是把已有理解表征变成一种低标注成本的后训练条件，再检验它能否改善其他生成任务。关键在于条件设计、信息瓶颈和能力保持，而不只是多加一个 reconstruction loss。</p>
+<footer><a href="../index.html#notes">← All notes</a></footer></article></main><script src="vendor/mermaid.min.js"></script><script>mermaid.initialize({startOnLoad:true,securityLevel:"strict",theme:"neutral",fontFamily:"system-ui",flowchart:{htmlLabels:false}});</script></body></html>

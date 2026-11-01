@@ -1,0 +1,62 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>T-Rex：让触觉及时参与动作修正 · Jieming Li</title><link rel="stylesheet" href="../assets/styles.css"><link rel="stylesheet" href="../assets/notes.css"><link rel="stylesheet" href="vendor/katex/katex.min.css"></head><body class="note-page"><header class="note-nav"><a href="../index.html#notes">← Notes</a><a href="../index.html">Jieming Li</a></header><main class="note-layout"><aside class="note-outline"><p class="eyebrow">On this page</p><nav aria-label="目录"><ol><li><a href="#section-0">1. 触觉有用，不代表模型已经用好了</a></li><li><a href="#section-1">2. 三路触觉输入各自保留什么</a></li><li><a href="#section-2">3. 关键机制是分段生成动作</a></li><li><a href="#section-3">4. 示范是怎样采集出来的</a></li><li><a href="#section-4">5. 真实任务评测应该怎么看</a></li><li><a href="#section-5">6. 对触觉策略研究的启发</a></li></ol></nav></aside><article class="note-content" id="content"><p class="eyebrow">Research notebook · 研究笔记</p><h1 id="noteTitle">T-Rex：让触觉及时参与动作修正</h1>
+<p>机器人已经把卡片移到插槽附近，视觉上似乎对齐了，但继续推进时阻力突然增大。此时最需要的往往不是重新理解整幅图像，而是根据刚刚发生的接触，及时改变姿态和施力方式。</p>
+<p>T-Rex 讨论的就是这种能力：<strong>视觉提供操作方向，触觉在接触过程中修正动作。</strong> 它既研究如何编码触觉的时间变化，也研究如何让这些变化更快地影响正在生成的动作。</p>
+<p>论文：<a href="https://arxiv.org/abs/2606.17055">T-Rex: Tactile-Reactive Dexterous Manipulation</a>；<a href="https://tactile-rex.github.io/">项目主页</a>。本笔记依据提供的 SharpaDex 解读，并核对论文 v1 的编码器、推理机制和数据口径；后面的实验建议属于延伸思考。</p>
+<h2 id="section-0">1. 触觉有用，不代表模型已经用好了</h2>
+<p>把力信号拼接到视觉特征后面，是一种直接的多模态做法。但这还留下两个问题。</p>
+<p>首先，当前一帧不能完整描述接触。相同的力值，可能对应刚刚碰到物体，也可能对应已经压紧后正在卸力。是否继续推进，取决于信号怎样变化，而不只是这一刻有多大。</p>
+<p>其次，触觉更新即使很快，动作也未必及时变化。如果每次修正都需要重新运行整个视觉语言模型，接触反馈仍可能被较慢的推理链条拖住。触觉能力需要同时落在表征和执行机制上。</p>
+<p>在翻页、薄片抓取、插入和手内旋转中，这两个问题尤其突出：视觉能告诉模型物体在哪里，但接触区域常被手指遮挡，是否夹住、卡住或开始滑动，需要额外的物理反馈。</p>
+<h2 id="section-1">2. 三路触觉输入各自保留什么</h2>
+<p>原材料中“用时序 VQ-VAE 编码触觉图像和力信号”的说法需要细化。论文实际采用三路编码：</p>
+<table>
+<thead>
+<tr>
+<th>输入</th>
+<th>编码方式</th>
+<th>保留的信息</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>最近 16 帧的逐指力历史</td>
+<td>时序 VQ-VAE</td>
+<td>一段时间内的受力变化</td>
+</tr>
+<tr>
+<td>当前力向量</td>
+<td>直接投影</td>
+<td>当前接触的即时数值</td>
+</tr>
+<tr>
+<td>当前触觉形变图</td>
+<td>CNN 编码</td>
+<td>接触区域的空间形变</td>
+</tr>
+</tbody>
+</table>
+<p>三路特征再组成触觉 token。<strong>并不是把触觉图像与力历史全部送进同一个 VQ-VAE。</strong> <a href="https://arxiv.org/html/2606.17055v1#S4.SS1">编码器原文，第 4.1 节</a></p>
+<p>这个设计容易理解：历史负责区分变化趋势，当前力避免即时信息被压缩掉，形变图补足接触位置和形状。它们描述的是同一次交互的不同方面。</p>
+<p>但“用了历史”不等于模型必然学会了滑移识别。是否捕捉到真正有用的接触变化，需要通过打乱历史、改变历史长度、移除形变输入等实验验证。</p>
+<h2 id="section-2">3. 关键机制是分段生成动作</h2>
+<p>T-Rex 使用具有不同职责的 Transformer experts。视觉与语言提供上下文，action expert 和 tactile expert 则分段完成动作的 flow-matching 去噪：</p>
+<p><strong>纯噪声 → action expert 生成中间动作状态 → tactile expert 结合触觉继续去噪 → 可执行动作块。</strong></p>
+<p>分界点位于 flow time 的中间时刻。触觉分支复用缓存的视觉语言上下文，使局部修正不必每次都重算整套视觉处理。<a href="https://arxiv.org/html/2606.17055v1#S4.SS2">方法原文，第 4.2 节</a></p>
+<p>因此，不能仅用“异步 MoT”概括整套机制，也不宜理解为已经生成一个完全确定的动作，再随意加上一点力反馈。触觉专家参与的是后段的动作生成过程。</p>
+<p>这里还要分清两种时间：flow time 是生成算法中的去噪进度，机器人时间才是接触发生和动作执行的时间。分段去噪提供了接入较新触觉信息的位置，但系统最终是否来得及响应，仍取决于观测、编码、推理和执行延迟。</p>
+<h2 id="section-3">4. 示范是怎样采集出来的</h2>
+<p>提供的材料介绍了 Wave 平台上的遥操作链条：Manus 手套测量指尖位置，VIVE 追踪手腕位姿，通过差分逆运动学映射到机器人，再进行低通滤波和级联 PID 跟踪。</p>
+<p>这里的 <strong>300 Hz 是底层控制频率，30 Hz 是数据记录频率</strong>，不能把 300 Hz 写成 T-Rex 神经网络的推理频率。电机频繁跟踪目标，与模型频繁生成新目标，是不同的事情。</p>
+<p>论文自己的数据集约为 100 小时，包含 7,755 个 episode、207 个物体和 22 类操作原语。这与 <a href="SharpaDex.html">SharpaDex</a> 的约 300 小时、28,993 个 episode 是两套统计，不能混用。<a href="https://arxiv.org/html/2606.17055v1#S3">数据集原文</a></p>
+<p>动作经过重定向和滤波，也意味着示范并非对人手运动的原样复制。接触反应既受到操作者判断影响，也受到控制器和记录频率影响，分析训练数据时需要把这些环节一起考虑。</p>
+<h2 id="section-4">5. 真实任务评测应该怎么看</h2>
+<p>T-Rex 在 12 项真实机器人任务上评测，覆盖翻页、擦拭、插入、手内重新定向等接触密集操作。提供的材料强调，这些任务用于检验触觉变化能否驱动有效动作修正。</p>
+<p>例如，插入阻力上升之后，策略应该判断是否需要调整对齐，而不是一味推进；抓薄片时，局部形变与力的变化可以帮助区分是否夹住、是否正在滑动。这些例子解释了触觉的潜在价值，但不能据此假定模型内部已经显式识别出相应物理事件。</p>
+<p>理解实验时，可以把三个问题分开：输入触觉是否有帮助；历史和空间编码是否比简单力向量更好；较快的触觉反馈是否比相同输入的慢速处理更好。只有拆开比较，才能判断收益来自信息、表示，还是响应机制。</p>
+<p>同时，任务成功率之外值得记录接触后的反应延迟、施力峰值、插入卡顿次数和滑移恢复情况。它们更接近“及时修正”这一能力本身；这些是后续评估建议，并非本文宣称论文已经逐项报告的指标。</p>
+<h2 id="section-5">6. 对触觉策略研究的启发</h2>
+<p>最直接的实验起点，是在相同示范和训练预算下比较 RGB、RGB 加 wrench、RGB 加形变图，以及联合输入。随后再固定模态，比较是否保留历史、是否允许触觉更快更新。</p>
+<p>还可以按接触阶段报告结果。伸手接近时，视觉可能已经足够；首次接触、持续施力和滑移恢复时，触觉的价值才更加集中。若只看整段轨迹的平均损失，这种差异很容易被非接触阶段掩盖。</p>
+<p>T-Rex 的局限也可以从这里理解：局部触觉无法独立解决选错目标、长程规划或缺失任务知识的问题；缓存的视觉上下文也可能在场景明显变化后变得陈旧。快分支与慢分支什么时候重新对齐，是后续系统设计值得研究的问题。</p>
+<p>对 WAM 或 VLA 来说，这篇工作提供了一种具体思路：保留视觉所提供的操作上下文，同时为接触变化留出能及时改变动作的通道。最终要验证的不是模型接入了多少模态，而是物体开始滑动或插入受阻时，下一步动作是否真的变得更合适。</p>
+<footer><a href="../index.html#notes">← All notes</a></footer></article></main></body></html>

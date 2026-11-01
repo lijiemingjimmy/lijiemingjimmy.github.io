@@ -1,0 +1,155 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>UNITAS：在三维空间中统一动作与世界变化 · Jieming Li</title><link rel="stylesheet" href="../assets/styles.css"><link rel="stylesheet" href="../assets/notes.css"><link rel="stylesheet" href="vendor/katex/katex.min.css"></head><body class="note-page"><header class="note-nav"><a href="../index.html#notes">← Notes</a><a href="../index.html">Jieming Li</a></header><main class="note-layout"><aside class="note-outline"><p class="eyebrow">On this page</p><nav aria-label="目录"><ol><li><a href="#section-0">1. Action Flow 与 Scene Flow</a></li><li><a href="#section-1">2. 每个点用一个轨迹 token 表示</a></li><li><a href="#section-2">3. 让视觉特征也对齐到世界坐标</a></li><li><a href="#section-3">4. 两个 Expert，分别支持控制与世界预测</a></li><li><a href="#section-4">5. 策略与世界模型的实验结果</a></li><li><a href="#section-5">6. 消融提醒：哪些信息真正帮助了控制</a></li><li><a href="#section-6">7. 三维表示仍然有哪些边界</a></li><li><a href="#section-7">8. 与 EVA 的联系，以及下一步值得做什么</a></li></ol></nav></aside><article class="note-content" id="content"><p class="eyebrow">Research notebook · 研究笔记</p><h1 id="noteTitle">UNITAS：在三维空间中统一动作与世界变化</h1>
+<p>论文：<strong>A 3D-Native World Action Model for Embodied Manipulation</strong>。</p>
+<p>本笔记依据提供的论文解读整理，实验数字沿用该材料，未独立复核原文。</p>
+<p>UNITAS 的出发点是：机器人在三维物理空间中操作，但视频世界模型往往在二维图像空间中描述变化。相同的真实位移，在不同相机视角下可能表现为完全不同的像素运动。</p>
+<p>它选择用 <strong>具有物理尺度的三维点轨迹</strong> 同时表示机器人运动与环境变化，让动作和场景动态共享一种表示形式。</p>
+<h2 id="section-0">1. Action Flow 与 Scene Flow</h2>
+<p>UNITAS 将三维运动分成两类：</p>
+<table>
+<thead>
+<tr>
+<th>表示</th>
+<th>描述什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Action Flow</td>
+<td>夹爪或人手上的点如何运动</td>
+</tr>
+<tr>
+<td>Scene Flow</td>
+<td>环境中的物体和场景点如何运动</td>
+</tr>
+</tbody>
+</table>
+<p>例如机器人把杯子向右推，Action Flow 描述夹爪轨迹，Scene Flow 描述杯子及其他场景点随之发生的变化。材料中提到，每个机器人夹爪可采样 20 个点来表示其运动。</p>
+<p>这使模型既可以描述操作本身，也可以在给定 Action Flow 后预测场景后果。</p>
+<p>这里的 Flow 指三维点的运动，不应和生成模型中从噪声到样本的 Flow Matching 速度场混为一谈。</p>
+<h2 id="section-1">2. 每个点用一个轨迹 token 表示</h2>
+<p>对当前三维点 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>x</mi><mrow><mi>t</mi><mo separator="true">,</mo><mi>n</mi></mrow></msub></mrow><annotation encoding="application/x-tex">x_{t,n}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.7167em;vertical-align:-0.2861em;"></span><span class="mord"><span class="mord mathnormal">x</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">t</span><span class="mpunct mtight">,</span><span class="mord mathnormal mtight">n</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span></span></span></span></eq>，未来位移写成：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mi mathvariant="normal">Δ</mi><msub><mi>x</mi><mrow><mi>n</mi><mo separator="true">,</mo><mi>k</mi></mrow></msub><mo>=</mo><msub><mi>x</mi><mrow><mi>t</mi><mo>+</mo><msub><mi>τ</mi><mi>k</mi></msub><mo separator="true">,</mo><mi>n</mi></mrow></msub><mo>−</mo><msub><mi>x</mi><mrow><mi>t</mi><mo separator="true">,</mo><mi>n</mi></mrow></msub><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+\Delta x_{n,k}=x_{t+\tau_k,n}-x_{t,n}.
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.9694em;vertical-align:-0.2861em;"></span><span class="mord">Δ</span><span class="mord"><span class="mord mathnormal">x</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">n</span><span class="mpunct mtight">,</span><span class="mord mathnormal mtight" style="margin-right:0.0315em;">k</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.8694em;vertical-align:-0.2861em;"></span><span class="mord"><span class="mord mathnormal">x</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">t</span><span class="mbin mtight">+</span><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right:0.1132em;">τ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3448em;"><span style="top:-2.3488em;margin-left:-0.1132em;margin-right:0.0714em;"><span class="pstrut" style="height:2.5em;"></span><span class="katex-sizing reset-size3 size1 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0315em;">k</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.1512em;"><span></span></span></span></span></span></span><span class="mpunct mtight">,</span><span class="mord mathnormal mtight">n</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.7167em;vertical-align:-0.2861em;"></span><span class="mord"><span class="mord mathnormal">x</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">t</span><span class="mpunct mtight">,</span><span class="mord mathnormal mtight">n</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span><span class="mord">.</span></span></span></span></span></eqn></section><p>模型预测的是同一个点在不同未来时刻的位移，而不是每一帧重新生成一套没有对应关系的点云。</p>
+<p>UNITAS 使用 Physical-Time Trajectory Tokenizer，将一个点在多个时刻的位移编码成一个 latent token。这样，序列中的 token 数量主要随点数变化，而不必直接等于“点数 × 时间步数”。</p>
+<p>另一个关键是使用真实物理时间 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>τ</mi><mi>k</mi></msub></mrow><annotation encoding="application/x-tex">\tau_k</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.5806em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1132em;">τ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:-0.1132em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0315em;">k</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span></eq>，而不是只记录帧序号。10Hz 与 20Hz 的数据中，相隔一帧代表不同持续时间；使用物理时间可以帮助模型处理不同采样频率的轨迹。</p>
+<p>这种表示有利于混合机器人和人手数据，但时间统一不意味着不同本体的动作已经完全等价。几何标定、点对应关系和执行器约束仍然需要处理。</p>
+<h2 id="section-2">3. 让视觉特征也对齐到世界坐标</h2>
+<p>只把输出写成三维轨迹还不够，输入视觉特征也需要知道自己对应哪个物理位置。</p>
+<p>有深度时，UNITAS 使用相机内参、外参和深度，把像素反投影到世界坐标，再给视觉 token 添加三维位置编码。</p>
+<p>没有深度时，则沿相机射线采样 64 个候选深度，通过特征相关性对候选三维位置加权。</p>
+<p>因此，“不使用深度图”不等于“不需要几何信息”。无深度版本仍需要相机标定信息，不能直接理解为任意未标定 RGB 相机都可以使用。</p>
+<p>在材料列出的 LIBERO-Plus 对应消融配置中，无深度版本达到 84.43%，使用真实深度为 84.68%。它说明该设置下学习到的空间特征可以部分替代深度输入，但不代表所有场景下都能恢复同样准确的几何。</p>
+<h2 id="section-3">4. 两个 Expert，分别支持控制与世界预测</h2>
+<p>UNITAS 采用两个关联的 Transformer Expert：</p>
+<ul>
+<li><strong>Point Dynamics Expert</strong>：预测 Action Flow 和 Scene Flow，学习机器人与环境的三维运动关系。</li>
+<li><strong>Action Expert</strong>：生成可以执行的末端动作 chunk，包括平移、旋转和夹爪开合。</li>
+</ul>
+<p>两个分支通过观测表征关联，但 Action Expert <strong>不直接读取未来 Flow token</strong>。</p>
+<p>因此，系统可以有两种运行模式：</p>
+<table>
+<thead>
+<tr>
+<th>模式</th>
+<th>运行内容</th>
+<th>主要用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Policy Mode</td>
+<td>生成控制命令，跳过未来 Flow 生成</td>
+<td>较低延迟的动作执行</td>
+</tr>
+<tr>
+<td>World Model Mode</td>
+<td>生成机器人运动，并据此预测场景点轨迹</td>
+<td>预测和分析动作后果</td>
+</tr>
+</tbody>
+</table>
+<p>三维动态训练可以改善控制表征，但这和“先预测多个动作的后果，再选出最佳动作”是不同的系统流程。UNITAS 的高成功率不能直接证明它在执行时进行了显式世界模型规划。</p>
+<h2 id="section-4">5. 策略与世界模型的实验结果</h2>
+<p>材料记载 UNITAS 约有 1.7B 参数，使用 Florence-2 预训练视觉语言骨干，并混合仿真、真实机器人和人手演示训练。</p>
+<p>主要策略结果为：</p>
+<table>
+<thead>
+<tr>
+<th>评测</th>
+<th style="text-align:right">成功率</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>LIBERO</td>
+<td style="text-align:right">99.8%</td>
+</tr>
+<tr>
+<td>LIBERO-Plus</td>
+<td style="text-align:right">89.1%</td>
+</tr>
+<tr>
+<td>RoboTwin 2.0 Clean</td>
+<td style="text-align:right">92.94%</td>
+</tr>
+<tr>
+<td>RoboTwin 2.0 Randomized</td>
+<td style="text-align:right">93.04%</td>
+</tr>
+<tr>
+<td>VLABench Task Success Rate</td>
+<td style="text-align:right">56.2%</td>
+</tr>
+</tbody>
+</table>
+<p>真实机器人 Organize Books 和 Pack the Ball 分别达到 90% 和 80%，每项评测 20 次。这支持在相应任务上的有效性，但真机样本量仍有限。</p>
+<p>世界模型部分也有独立评测。在 RoboTwin 的动作条件场景预测中，Moving ADE 从 PointWorld 的 0.656cm 降到 0.427cm，约下降 35%。这是运动点预测误差的改善，与策略任务成功率属于不同维度。</p>
+<p>作者报告在 RTX 5090 D 上：</p>
+<ul>
+<li>Action-only：约 55.77ms / chunk。</li>
+<li>同时预测动作和两种 Flow，使用 1024 个 Scene Query：约 305.49ms。</li>
+</ul>
+<p>两种延迟对应不同计算内容。不能用 action-only 的时间代表完整世界预测，也不能把每个 chunk 的时间直接等同于机器人单步控制周期。</p>
+<h2 id="section-5">6. 消融提醒：哪些信息真正帮助了控制</h2>
+<p>材料中两组消融尤其值得注意：</p>
+<table>
+<thead>
+<tr>
+<th>改动</th>
+<th>LIBERO-Plus 成功率变化</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>加入 Scene Flow supervision</td>
+<td>85.74% → 86.47%</td>
+</tr>
+<tr>
+<td>去掉历史 Action Flow token</td>
+<td>85.74% → 75.92%</td>
+</tr>
+</tbody>
+</table>
+<p>在这些配置中，未来场景监督带来 0.73 个百分点提升，而移除历史动作信息导致 9.82 个百分点下降。它提示历史运动信息在该设置下十分重要，不能把整体性能提升全部归因于未来 Scene Flow 预测。</p>
+<p>这也不是对所有模块贡献的完整排序：两种消融有不同改动方式，仍需结合误差范围和其他控制实验理解。它们与完整模型 89.1% 的主结果也不应混作同一配置。</p>
+<h2 id="section-6">7. 三维表示仍然有哪些边界</h2>
+<p>第一，明确三维坐标不等于获得完整物理模型。点轨迹可以描述运动，但并不自动保证力、摩擦、接触和关节约束一致。</p>
+<p>第二，几何输入的质量很关键。深度误差、外参偏差、遮挡和点对应错误，都可能影响世界坐标下的特征和轨迹。</p>
+<p>第三，Action Flow 是统一的运动描述，但机器人执行仍需要控制命令。不同本体可以具有相似的夹爪点轨迹，却有不同的可达范围和动力学限制。</p>
+<p>第四，当前架构没有强制动作分支利用预测后果修正输出。因此，世界预测准确和策略表现好可以同时成立，但两者之间的决策因果关系仍需额外实验验证。</p>
+<h2 id="section-7">8. 与 EVA 的联系，以及下一步值得做什么</h2>
+<p>EVA 保留视频作为主要表示，用冻结 IDM 解码动作，再根据平滑性和限幅奖励优化视频生成器。UNITAS 则在表示层面把动作和世界变化统一到三维点轨迹中。</p>
+<p>可以把两者理解为：</p>
+<p><strong>EVA：生成结果是否能被机器人执行？</strong></p>
+<p><strong>UNITAS：动作和环境变化能否用共同的物理空间表示？</strong></p>
+<p>一个自然的后续方向，是把三维预测真正接入 Action Verification / Replanning：</p>
+<ol>
+<li>提出候选动作，并获得对应的 Action Flow。</li>
+<li>预测候选动作引起的 Scene Flow。</li>
+<li>检查任务进展、几何约束和预测不确定性。</li>
+<li>对不合适的候选重新规划，并在执行后用新观测纠正预测。</li>
+</ol>
+<p>这需要验证候选动作与预测输入一致，也需要防止策略利用世界模型误差。上述流程是基于两篇工作的研究延伸，并不是 UNITAS 已经完成的执行机制。</p>
+<p>UNITAS 最值得关注的是三维表示、物理时间和多来源运动数据之间的连接。下一步的问题，是如何让学到的世界预测不只帮助训练表征，还能直接改变机器人即将执行的动作。</p>
+<footer><a href="../index.html#notes">← All notes</a></footer></article></main></body></html>

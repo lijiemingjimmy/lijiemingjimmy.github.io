@@ -1,0 +1,49 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DAPO 论文解读：让大规模推理强化学习稳定工作 · Jieming Li</title><link rel="stylesheet" href="../assets/styles.css"><link rel="stylesheet" href="../assets/notes.css"><link rel="stylesheet" href="vendor/katex/katex.min.css"></head><body class="note-page"><header class="note-nav"><a href="../index.html#notes">← Notes</a><a href="../index.html">Jieming Li</a></header><main class="note-layout"><aside class="note-outline"><p class="eyebrow">On this page</p><nav aria-label="目录"><ol><li><a href="#section-0">一、它解决的是什么问题</a></li><li><a href="#section-1">二、四个关键设计</a></li><li><a href="#section-2">三、为什么奖励相同的采样组值得关注</a></li><li><a href="#section-3">四、与高熵 token 方法的关系</a></li><li><a href="#section-4">五、阅读与迁移时的重点</a></li></ol></nav></aside><article class="note-content" id="content"><p class="eyebrow">Research notebook · 研究笔记</p><h1 id="noteTitle">DAPO 论文解读：让大规模推理强化学习稳定工作</h1>
+<p><strong>论文：</strong> DAPO: An Open-Source LLM Reinforcement Learning System at Scale<br>
+<strong>团队：</strong> ByteDance Seed、清华 AIR、香港大学等<br>
+<strong>时间：</strong> 2025 年；arXiv 编号 2503.14476<br>
+<strong>资源：</strong> <a href="https://arxiv.org/abs/2503.14476">论文</a> · <a href="https://arxiv.org/pdf/2503.14476">PDF</a> · <a href="https://dapo-sia.github.io/">项目主页</a></p>
+<p><strong>一句话概括：DAPO 围绕探索、有效样本、损失聚合和超长回答处理，给出一套可复现的大规模推理 RL 配方，也是高熵 token 工作使用的训练基线。</strong></p>
+<h2 id="section-0">一、它解决的是什么问题</h2>
+<p>把可验证结果奖励接到语言模型上，还需要处理训练中探索不足、采样组没有奖励差异、回答长度差异以及超长截断等问题。DAPO 基于 GRPO 风格的组相对优化，对这些环节作出系统性调整。</p>
+<p>项目报告，在 Qwen2.5-32B Base 上取得 AIME 2024 的 50% 准确率，并公开训练配方、数据、verifier、模型及基础设施材料。<a href="https://dapo-sia.github.io/">来源：项目主页</a></p>
+<h2 id="section-1">二、四个关键设计</h2>
+<table>
+<thead>
+<tr>
+<th>设计</th>
+<th>核心作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Decoupled Clipping</td>
+<td>分开设置概率比裁剪上下界，给提高低概率动作的概率留下空间</td>
+</tr>
+<tr>
+<td>Dynamic Sampling</td>
+<td>过滤组内奖励完全一致的样本，并继续采样以形成有效训练批次</td>
+</tr>
+<tr>
+<td>Token-level Policy Gradient Loss</td>
+<td>按 token 聚合策略梯度损失，改变不同长度回答对目标的贡献方式</td>
+</tr>
+<tr>
+<td>Overlong Reward Shaping</td>
+<td>调整超长回答相关的奖励与处理，减少截断带来的不良训练信号</td>
+</tr>
+</tbody>
+</table>
+<p>这些改动分别作用于探索、可学习信号、权重分配与长度管理，组合成训练方法。<a href="https://arxiv.org/abs/2503.14476">来源：论文</a></p>
+<h2 id="section-2">三、为什么奖励相同的采样组值得关注</h2>
+<p>组相对方法通常根据同一题多条回答的奖励差异计算优势。如果一组回答全对或全错，组内就缺乏可用于区分候选的结果信号。</p>
+<p>全对可能意味着问题太容易，全错则可能意味着当前策略难以采样到成功路径。两者都需要在构造训练批次时考虑，但“继续采样”“更换问题”和“引入教师提示”会消耗不同预算，也引入不同信息。</p>
+<p>这个问题与 <a href="Curriculum-RL.html">Curriculum RL</a> 直接相关：后者进一步研究怎样围绕能力边界，使困难问题变得可学习。</p>
+<h2 id="section-3">四、与高熵 token 方法的关系</h2>
+<p><a href="High-Entropy-Minority-Tokens.html">Beyond the 80/20 Rule</a> 保留 DAPO 的主要训练配方，在 policy gradient loss 中增加高熵掩码，并相应调整归一化分母。</p>
+<p>因此，两篇工作的关系很清楚：DAPO 提供可运行的训练系统，高熵 token 研究则集中检验“哪些位置应直接贡献策略梯度”。</p>
+<h2 id="section-4">五、阅读与迁移时的重点</h2>
+<p>以下是应用推论。</p>
+<p>将 DAPO 的经验迁移到 Agent 时，应记录为获得有效训练样本而额外发生的采样成本。还需检查长轨迹获得更大权重是否符合任务目标，以及奖励相同究竟来自候选质量相同，还是 verifier 粒度过粗。</p>
+<p>DAPO 的启发是，强化学习效果不仅由算法名称决定；探索空间、批次构造、损失权重和奖励口径都会改变最终学到的行为。</p>
+<footer><a href="../index.html#notes">← All notes</a></footer></article></main></body></html>

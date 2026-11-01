@@ -183,3 +183,19 @@ main, .site-footer { width: min(calc(100% - 48px), var(--content)); margin: 0 au
   html { scroll-behavior: auto; }
   *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
 }
+
+/* Project stories and contact */
+.wam-banner { aspect-ratio: 1.77; overflow: hidden; border-radius: 6px; background: #07131c; margin-bottom: 24px; }
+.wam-banner img { width: 100%; max-width: none; }
+.post-card:has(.wam-banner) { padding: 0 0 26px; overflow: hidden; }
+.post-card:has(.wam-banner) > :not(.wam-banner) { margin-left: 26px; margin-right: 26px; }
+.post-card:has(.wam-banner) h2 { font-family: var(--sans); font-size: clamp(1.4rem, 3vw, 2rem); line-height: 1.5; }
+.article-shell:has(.wam-banner) h1 { font-family: var(--sans); font-size: clamp(2rem, 4vw, 3rem); line-height: 1.4; letter-spacing: -.02em; }
+.wam-author { color: var(--blue); font-weight: 700; }
+.article-shell .inline-links { margin: 24px 0; }
+.wechat-qr { width: min(100%, 320px); border: 1px solid var(--line); border-radius: 10px; }
+.arena-art { width: 100%; padding: 28px 16px; color: var(--paper-light); background: var(--navy); text-align: center; border-radius: 4px; }
+.arena-art span { font-size: 11px; letter-spacing: .15em; }
+.arena-art strong { display: block; font-family: var(--serif); font-size: 48px; margin: 18px 0; }
+.arena-art p { color: #d5e1e7; }
+.arena-art small { font-size: 11px; }

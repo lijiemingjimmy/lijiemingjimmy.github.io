@@ -1,0 +1,54 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>LLaDA 论文解读：用掩码去噪实现大规模语言建模 · Jieming Li</title><link rel="stylesheet" href="../assets/styles.css"><link rel="stylesheet" href="../assets/notes.css"><link rel="stylesheet" href="vendor/katex/katex.min.css"></head><body class="note-page"><header class="note-nav"><a href="../index.html#notes">← Notes</a><a href="../index.html">Jieming Li</a></header><main class="note-layout"><aside class="note-outline"><p class="eyebrow">On this page</p><nav aria-label="目录"><ol><li><a href="#section-0">一、基本机制：破坏文本，再学习恢复</a></li><li><a href="#section-1">二、与 AR 模型的区别</a></li><li><a href="#section-2">三、论文的主要价值</a></li><li><a href="#section-3">四、为什么它是理解 JustGRPO 的前置论文</a></li><li><a href="#section-4">五、对具身生成模型的启发</a></li></ol></nav></aside><article class="note-content" id="content"><p class="eyebrow">Research notebook · 研究笔记</p><h1 id="noteTitle">LLaDA 论文解读：用掩码去噪实现大规模语言建模</h1>
+<p><strong>论文：</strong> Large Language Diffusion Models<br>
+<strong>作者与团队：</strong> Shen Nie、Fengqi Zhu、Zebin You 等，中国人民大学与蚂蚁集团<br>
+<strong>时间：</strong> 2025 年；arXiv 编号 2502.09992<br>
+<strong>资源：</strong> <a href="https://arxiv.org/abs/2502.09992">论文</a> · <a href="https://arxiv.org/pdf/2502.09992">PDF</a> · <a href="https://ml-gsai.github.io/LLaDA-demo/">项目主页、代码与模型入口</a></p>
+<p><strong>一句话概括：LLaDA 展示了掩码扩散语言模型在 8B 规模上从头训练的可行性，让大规模语言生成拥有不同于逐 token 自回归预测的实现路径。</strong></p>
+<h2 id="section-0">一、基本机制：破坏文本，再学习恢复</h2>
+<p>训练时，对完整文本的部分位置施加 mask，让模型根据可见 token 恢复被遮住的内容。通过覆盖不同掩码比例，模型学习从不同程度的不完整文本中预测缺失部分。</p>
+<p>生成时，可以从大段 <code>[MASK]</code> 开始，在多个去噪步骤中逐步填充内容。一个步骤可以处理多个位置，生成顺序也不必严格从左到右。<a href="https://arxiv.org/abs/2502.09992">来源：论文</a></p>
+<h2 id="section-1">二、与 AR 模型的区别</h2>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>自回归语言模型</th>
+<th>掩码扩散语言模型</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>典型训练任务</td>
+<td>根据左侧前缀预测下一个 token</td>
+<td>根据可见上下文恢复被遮住的 token</td>
+</tr>
+<tr>
+<td>典型生成过程</td>
+<td>从左到右追加 token</td>
+<td>逐步选择位置并去噪</td>
+</tr>
+<tr>
+<td>条件信息</td>
+<td>已生成前缀</td>
+<td>当前可见的左右文</td>
+</tr>
+<tr>
+<td>并行生成机会</td>
+<td>通常需要额外解码机制</td>
+<td>原生存在同时填充多个位置的机会</td>
+</tr>
+</tbody>
+</table>
+<p>这是机制层面的对比。实际速度、质量与计算成本还取决于去噪步数、每步填充数量和采样器。</p>
+<h2 id="section-2">三、论文的主要价值</h2>
+<p>LLaDA 采用预训练和监督微调流程，从头训练到 8B 规模，并展示语言任务、指令跟随和上下文学习等能力。项目用与 LLaMA3 8B 的比较，说明这种建模方式具有竞争力。<a href="https://ml-gsai.github.io/LLaDA-demo/">来源：项目主页</a></p>
+<p>它支持一个重要研究方向：语言能力可以建立在不同的生成建模机制上，而生成顺序和训练目标本身仍是可研究的变量。</p>
+<h2 id="section-3">四、为什么它是理解 JustGRPO 的前置论文</h2>
+<p><a href="The-Flexibility-Trap.html">The Flexibility Trap</a> 的核心实验使用 LLaDA-Instruct 等模型，研究在已有扩散模型上，怎样选择生成顺序和 RL 策略。</p>
+<p>LLaDA 回答“这种语言建模方式能否在大规模上工作”；JustGRPO 回答“这种模型在推理 RL 中怎样探索和分配信用”。</p>
+<p>因此，使用 AR 顺序训练 JustGRPO，不意味着把模型网络结构改成了标准因果 Transformer；它是在同一个模型上定义训练时使用的策略。</p>
+<h2 id="section-4">五、对具身生成模型的启发</h2>
+<p>以下是应用推论。</p>
+<p>动作序列和计划也可能采用扩散式生成，但同时预测多个位置与有效探索策略分叉是两种能力。评测时，应分别观察并行生成带来的速度变化、生成质量以及相同预算下的任务覆盖范围。</p>
+<p>LLaDA 提供模型基础，后续工作则进一步揭示：如何使用生成自由度，会影响模型最终表现出来的能力。</p>
+<footer><a href="../index.html#notes">← All notes</a></footer></article></main></body></html>

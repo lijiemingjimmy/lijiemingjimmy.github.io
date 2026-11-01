@@ -1,0 +1,237 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ALPS：世界模型需要什么样的视觉状态编码器？ · Jieming Li</title><link rel="stylesheet" href="../assets/styles.css"><link rel="stylesheet" href="../assets/notes.css"><link rel="stylesheet" href="vendor/katex/katex.min.css"></head><body class="note-page"><header class="note-nav"><a href="../index.html#notes">← Notes</a><a href="../index.html">Jieming Li</a></header><main class="note-layout"><aside class="note-outline"><p class="eyebrow">On this page</p><nav aria-label="目录"><ol><li><a href="#section-0">1. 先看清它在系统里的位置</a></li><li><a href="#section-1">2. 三种能力为什么需要一起考虑？</a></li><li><a href="#section-2">3. 第一阶段：让同一套 patch token 接受四种监督</a></li><li><a href="#section-3">4. 第二阶段：有几何对应关系的跨视图自蒸馏</a></li><li><a href="#section-4">5. 为什么空间能力增强后，语言能力还能保留？</a></li><li><a href="#section-5">6. 三类下游实验，要分别理解</a></li><li><a href="#section-9">7. “预测可以看见”需要额外的解码器</a></li><li><a href="#section-10">8. 最有意思的结果，是重建与状态信息并不总是同向改善</a></li><li><a href="#section-11">9. 对 VLA、接触操作和失败恢复的启发</a></li></ol></nav></aside><article class="note-content" id="content"><p class="eyebrow">Research notebook · 研究笔记</p><h1 id="noteTitle">ALPS：世界模型需要什么样的视觉状态编码器？</h1>
+<p>世界模型通常先把图像编码成 latent，再预测动作会怎样改变 latent。如果第一步已经丢掉物体的位置、姿态或局部关系，后面的动力学模型就很难把这些信息重新找回来。</p>
+<p>ALPS 关注的就是这个起点：<strong>同一套视觉 token，能不能既保留物理状态，又与语言对齐，还能被解码回图像？</strong></p>
+<p>论文：<em>ALPS: Visual State Encoders for World Models</em>，2026 年 10 月 21 日，UCSC、UCSB 与 Google 合作。本文根据所提供的解读整理，并核对原论文 v1 的方法和主要实验。<a href="https://arxiv.org/abs/2610.30120">论文</a>｜<a href="https://ucsc-vlaa.github.io/ALPS/">项目</a>｜<a href="https://github.com/UCSC-VLAA/ALPS">代码</a></p>
+<h2 id="section-0">1. 先看清它在系统里的位置</h2>
+<p>ALPS 的名字是 A Language-aligned, Pixel-renderable State encoder。它训练的是视觉编码器，下游再接状态探针、策略、动力学模型或图像解码器。</p>
+<p>用简化的单步形式表示：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi>z</mi><mi>t</mi></msub><mo>=</mo><mi>E</mi><mo stretchy="false">(</mo><msub><mi>o</mi><mi>t</mi></msub><mo stretchy="false">)</mo><mo separator="true">,</mo><mspace width="2em"/><msub><mover accent="true"><mi>z</mi><mo>^</mo></mover><mrow><mi>t</mi><mo>+</mo><mn>1</mn></mrow></msub><mo>=</mo><mi>F</mi><mo stretchy="false">(</mo><msub><mi>z</mi><mi>t</mi></msub><mo separator="true">,</mo><msub><mi>a</mi><mi>t</mi></msub><mo stretchy="false">)</mo><mo separator="true">,</mo><mspace width="2em"/><msub><mover accent="true"><mi>o</mi><mo>^</mo></mover><mrow><mi>t</mi><mo>+</mo><mn>1</mn></mrow></msub><mo>=</mo><mi>D</mi><mo stretchy="false">(</mo><msub><mover accent="true"><mi>z</mi><mo>^</mo></mover><mrow><mi>t</mi><mo>+</mo><mn>1</mn></mrow></msub><mo stretchy="false">)</mo><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+z_t=E(o_t),\qquad
+\hat z_{t+1}=F(z_t,a_t),\qquad
+\hat o_{t+1}=D(\hat z_{t+1}).
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.5806em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.044em;">z</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:-0.044em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal" style="margin-right:0.0576em;">E</span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal">o</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mclose">)</span><span class="mpunct">,</span><span class="mspace" style="margin-right:2em;"></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord katex-accent"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.6944em;"><span style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span class="mord mathnormal" style="margin-right:0.044em;">z</span></span><span style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span class="accent-body" style="left:-0.1944em;"><span class="mord">^</span></span></span></span></span></span></span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:-0.044em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">t</span><span class="mbin mtight">+</span><span class="mord mtight">1</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2083em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal" style="margin-right:0.1389em;">F</span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.044em;">z</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:-0.044em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal">a</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mclose">)</span><span class="mpunct">,</span><span class="mspace" style="margin-right:2em;"></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord katex-accent"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.6944em;"><span style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span class="mord mathnormal">o</span></span><span style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span class="accent-body" style="left:-0.1944em;"><span class="mord">^</span></span></span></span></span></span></span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">t</span><span class="mbin mtight">+</span><span class="mord mtight">1</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2083em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal" style="margin-right:0.0278em;">D</span><span class="mopen">(</span><span class="mord"><span class="mord katex-accent"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.6944em;"><span style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span class="mord mathnormal" style="margin-right:0.044em;">z</span></span><span style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span class="accent-body" style="left:-0.1944em;"><span class="mord">^</span></span></span></span></span></span></span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:-0.044em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">t</span><span class="mbin mtight">+</span><span class="mord mtight">1</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2083em;"><span></span></span></span></span></span></span><span class="mclose">)</span><span class="mord">.</span></span></span></span></span></eqn></section><p>其中，<eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>E</mi></mrow><annotation encoding="application/x-tex">E</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord mathnormal" style="margin-right:0.0576em;">E</span></span></span></span></eq> 提供状态表征，<eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>F</mi></mrow><annotation encoding="application/x-tex">F</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord mathnormal" style="margin-right:0.1389em;">F</span></span></span></span></eq> 学习动作条件下的变化，<eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>D</mi></mrow><annotation encoding="application/x-tex">D</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord mathnormal" style="margin-right:0.0278em;">D</span></span></span></span></eq> 把预测变成可查看的画面。实际动力学模型还可以使用历史上下文。</p>
+<p><strong>ALPS 主要改进的是 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>E</mi></mrow><annotation encoding="application/x-tex">E</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord mathnormal" style="margin-right:0.0576em;">E</span></span></span></span></eq>。</strong> 视觉编码器预训练使用静态图像与文本，不依赖机器人动作标签或时序交互监督；但下游动力学和策略仍然需要各自的训练数据。</p>
+<p>这一区分很重要：“静态图像预训练得到的特征适合动力学学习”，不等于“模型仅看静态图像就学会了动作引起的物理变化”。</p>
+<h2 id="section-1">2. 三种能力为什么需要一起考虑？</h2>
+<table>
+<thead>
+<tr>
+<th>能力</th>
+<th>对下游的作用</th>
+<th>仅靠这一项可能遗漏什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>物理状态信息</td>
+<td>区分位置、姿态和空间关系</td>
+<td>不一定有直接可用的语言接口</td>
+</tr>
+<tr>
+<td>语言对齐</td>
+<td>把指令、目标和场景联系起来</td>
+<td>全局语义相似，不代表局部位置准确</td>
+</tr>
+<tr>
+<td>像素可恢复性</td>
+<td>把观察和预测渲染出来检查</td>
+<td>重建细节丰富，不保证动作相关信息更好</td>
+</tr>
+</tbody>
+</table>
+<p>例如，两张“机械臂抓杯子”的图像可能有相同语义，但杯子是否已经离开桌面，对控制很关键。反过来，背景纹理重建得非常准确，也未必有助于判断杯子是否抓稳。</p>
+<p>ALPS 希望在这三者之间取得平衡。它的贡献应当从整体接口和下游效果判断，不需要每一个单项指标都超过专门优化该指标的模型。</p>
+<h2 id="section-2">3. 第一阶段：让同一套 patch token 接受四种监督</h2>
+<p>模型采用 ViT-B/16。在 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>224</mn><mo>×</mo><mn>224</mn></mrow><annotation encoding="application/x-tex">224\times224</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.7278em;vertical-align:-0.0833em;"></span><span class="mord">224</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">×</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.6444em;"></span><span class="mord">224</span></span></span></span></eq> 输入下，输出 196 个、每个 768 维的 patch token。</p>
+<p>第一阶段从零训练，目标为：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi mathvariant="script">L</mi><mn>1</mn></msub><mo>=</mo><msub><mi mathvariant="script">L</mi><mrow><mi mathvariant="normal">I</mi><mi mathvariant="normal">T</mi><mi mathvariant="normal">C</mi></mrow></msub><mo>+</mo><msub><mi mathvariant="script">L</mi><mrow><mi mathvariant="normal">C</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">p</mi></mrow></msub><mo>+</mo><msub><mi>w</mi><mrow><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">c</mi></mrow></msub><msub><mi mathvariant="script">L</mi><mrow><mi mathvariant="normal">R</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">c</mi></mrow></msub><mo>+</mo><mn>0.25</mn><msub><mi mathvariant="script">L</mi><mrow><mi mathvariant="normal">D</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">s</mi><mi mathvariant="normal">e</mi></mrow></msub><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+\mathcal L_1
+=\mathcal L_{\mathrm{ITC}}
++\mathcal L_{\mathrm{Cap}}
++w_{\mathrm{rec}}\mathcal L_{\mathrm{Rec}}
++0.25\mathcal L_{\mathrm{Dense}}.
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathcal">L</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">1</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathcal">L</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3283em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">ITC</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.9694em;vertical-align:-0.2861em;"></span><span class="mord"><span class="mord mathcal">L</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3283em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">Cap</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0269em;">w</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:-0.0269em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">rec</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mord"><span class="mord mathcal">L</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3283em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">Rec</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord">0.25</span><span class="mord"><span class="mord mathcal">L</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3283em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">Dense</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mord">.</span></span></span></span></span></eqn></section><p>四项损失各有分工：</p>
+<ul>
+<li><strong>图文对比：</strong> 让匹配的图像和文本在全局表示上接近。</li>
+<li><strong>描述生成：</strong> 从视觉 token 生成详细 caption，补充语义细节。</li>
+<li><strong>像素重建：</strong> 从干净或加噪 token 重建原图，保留可恢复的视觉信息。</li>
+<li><strong>稠密对应：</strong> 利用裁剪、缩放和翻转的已知关系，约束对应位置的局部特征。</li>
+</ul>
+<p>重建项包含 L1、结构相似度和图像梯度相关项。稠密对应使用局部对比学习：同一区域在不同增强视图中的对应特征作为正样本，其他位置或图像的特征作为负样本。<a href="https://arxiv.org/html/2610.30120v1#S3.SS1">论文 §3.1</a></p>
+<p>可以把这一阶段理解成同时提出三个要求：知道画面在说什么，保留画面长什么样，并且分得清信息来自哪里。</p>
+<p>数据使用 DataComp-1B 图文对与合成详细描述。训练先在 128 分辨率处理约 128 亿次样本，再在 224 分辨率处理约 10 亿次样本。这里是累计样本处理次数，不能写成 138 亿张独立图片。</p>
+<h2 id="section-3">4. 第二阶段：有几何对应关系的跨视图自蒸馏</h2>
+<p>这是最值得仔细看的部分。第一阶段已经有语言和像素能力，第二阶段希望进一步改善局部状态表征。</p>
+<p>Teacher 和 Student 都从第一阶段初始化，但 Teacher 保持冻结。对同一张图像：</p>
+<ol>
+<li>Teacher 接收干净裁剪 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>B</mi></mrow><annotation encoding="application/x-tex">B</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord mathnormal" style="margin-right:0.0502em;">B</span></span></span></span></eq>。</li>
+<li>Student 接收经过颜色、模糊等增强的裁剪 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>A</mi></mrow><annotation encoding="application/x-tex">A</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord mathnormal">A</span></span></span></span></eq>。</li>
+<li>Predictor 读取 Student token 和几何查询 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>q</mi><mi>i</mi></msub></mrow><annotation encoding="application/x-tex">q_i</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.625em;vertical-align:-0.1944em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0359em;">q</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:-0.0359em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span></eq>，预测 Teacher 的目标 patch 特征。</li>
+</ol>
+<p>几何查询告诉 Predictor：目标位置在 Student 裁剪中的哪里，以及两种裁剪的相对尺度。模型不必自行猜测两个视图的对应关系，可以把学习重点放在局部内容的稳定表示上。</p>
+<p>训练目标为：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi mathvariant="script">L</mi><mn>2</mn></msub><mo>=</mo><mfrac><mn>1</mn><mrow><mi mathvariant="normal">∣</mi><mi>V</mi><mi mathvariant="normal">∣</mi><mi>d</mi></mrow></mfrac><munder><mo>∑</mo><mrow><mi>i</mi><mo>∈</mo><mi>V</mi></mrow></munder><msubsup><mrow><mo fence="true">∥</mo><mi>P</mi><mo stretchy="false">(</mo><msub><mi>E</mi><mrow><mi mathvariant="normal">s</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">d</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">t</mi></mrow></msub><mo stretchy="false">(</mo><mi>A</mi><mo stretchy="false">)</mo><mo separator="true">,</mo><msub><mi>q</mi><mi>i</mi></msub><mo stretchy="false">)</mo><mo>−</mo><msubsup><mover accent="true"><mi>z</mi><mo>ˉ</mo></mover><mi>i</mi><mrow><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">h</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi></mrow></msubsup><mo stretchy="false">(</mo><mi>B</mi><mo stretchy="false">)</mo><mo fence="true">∥</mo></mrow><mn>2</mn><mn>2</mn></msubsup><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+\mathcal L_2=
+\frac{1}{|V|d}\sum_{i\in V}
+\left\|
+P(E_{\mathrm{student}}(A),q_i)
+-\bar z^{\mathrm{teacher}}_i(B)
+\right\|_2^2.
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathcal">L</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">2</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:2.6431em;vertical-align:-1.3217em;"></span><span class="mord"><span class="mopen nulldelimiter"></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.3214em;"><span style="top:-2.314em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord">∣</span><span class="mord mathnormal" style="margin-right:0.2222em;">V</span><span class="mord">∣</span><span class="mord mathnormal">d</span></span></span><span style="top:-3.23em;"><span class="pstrut" style="height:3em;"></span><span class="frac-line" style="border-bottom-width:0.04em;"></span></span><span style="top:-3.677em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord">1</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.936em;"><span></span></span></span></span></span><span class="mclose nulldelimiter"></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mop op-limits"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.05em;"><span style="top:-1.8557em;margin-left:0em;"><span class="pstrut" style="height:3.05em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">i</span><span class="mrel mtight">∈</span><span class="mord mathnormal mtight" style="margin-right:0.2222em;">V</span></span></span></span><span style="top:-3.05em;"><span class="pstrut" style="height:3.05em;"></span><span><span class="mop op-symbol large-op">∑</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:1.3217em;"><span></span></span></span></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="minner"><span class="minner"><span class="mopen"><span class="delimsizing mult"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.85em;"><span style="top:-2.85em;"><span class="pstrut" style="height:3.2em;"></span><span style="width:0.556em;height:1.2em;"><svg xmlns="http://www.w3.org/2000/svg" width="0.556em" height="1.2em" viewBox="0 0 556 1200"><path d="M145 15 v585 v0 v585 c2.667,10,9.667,15,21,15
+c10,0,16.667,-5,20,-15 v-585 v0 v-585 c-2.667,-10,-9.667,-15,-21,-15
+c-10,0,-16.667,5,-20,15z M188 15 H145 v585 v0 v585 h43z
+M367 15 v585 v0 v585 c2.667,10,9.667,15,21,15
+c10,0,16.667,-5,20,-15 v-585 v0 v-585 c-2.667,-10,-9.667,-15,-21,-15
+c-10,0,-16.667,5,-20,15z M410 15 H367 v585 v0 v585 h43z"/></svg></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.35em;"><span></span></span></span></span></span></span><span class="mord mathnormal" style="margin-right:0.1389em;">P</span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0576em;">E</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:-0.0576em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">student</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mopen">(</span><span class="mord mathnormal">A</span><span class="mclose">)</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0359em;">q</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:-0.0359em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mclose">)</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mord"><span class="mord katex-accent"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.5678em;"><span style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span class="mord mathnormal" style="margin-right:0.044em;">z</span></span><span style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span class="accent-body" style="left:-0.1944em;"><span class="mord">ˉ</span></span></span></span></span></span></span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.8991em;"><span style="top:-2.453em;margin-left:-0.044em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">teacher</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.247em;"><span></span></span></span></span></span></span><span class="mopen">(</span><span class="mord mathnormal" style="margin-right:0.0502em;">B</span><span class="mclose">)</span><span class="mclose"><span class="delimsizing mult"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.85em;"><span style="top:-2.85em;"><span class="pstrut" style="height:3.2em;"></span><span style="width:0.556em;height:1.2em;"><svg xmlns="http://www.w3.org/2000/svg" width="0.556em" height="1.2em" viewBox="0 0 556 1200"><path d="M145 15 v585 v0 v585 c2.667,10,9.667,15,21,15
+c10,0,16.667,-5,20,-15 v-585 v0 v-585 c-2.667,-10,-9.667,-15,-21,-15
+c-10,0,-16.667,5,-20,15z M188 15 H145 v585 v0 v585 h43z
+M367 15 v585 v0 v585 c2.667,10,9.667,15,21,15
+c10,0,16.667,-5,20,-15 v-585 v0 v-585 c-2.667,-10,-9.667,-15,-21,-15
+c-10,0,-16.667,5,-20,15z M410 15 H367 v585 v0 v585 h43z"/></svg></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.35em;"><span></span></span></span></span></span></span></span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.1031em;"><span style="top:-2.3003em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">2</span></span></span><span style="top:-3.352em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">2</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.3997em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord">.</span></span></span></span></span></eqn></section><p><eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mover accent="true"><mi>z</mi><mo>ˉ</mo></mover></mrow><annotation encoding="application/x-tex">\bar z</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.5678em;"></span><span class="mord katex-accent"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.5678em;"><span style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span class="mord mathnormal" style="margin-right:0.044em;">z</span></span><span style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span class="accent-body" style="left:-0.1944em;"><span class="mord">ˉ</span></span></span></span></span></span></span></span></span></span></eq> 是标准化后的 Teacher 特征，<eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>V</mi></mrow><annotation encoding="application/x-tex">V</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord mathnormal" style="margin-right:0.2222em;">V</span></span></span></span></eq> 是 Teacher patch 中心落在 Student 裁剪范围内的位置集合。<strong>监督只覆盖符合这个条件的位置，不要求 Student 凭空恢复不可见区域。</strong><a href="https://arxiv.org/html/2610.30120v1#S3.SS2">论文 §3.2</a></p>
+<p>例如，同一个杯子在大裁剪里与整张桌面一起出现，在小裁剪里只剩杯子和一小块桌面。Student 要在上下文、尺度和外观发生变化后，仍提供足够好的局部信息，让 Predictor 恢复对应 Teacher 特征。</p>
+<p>这里的 cross-view 是同一图片的增强视图，不应直接理解成真实多相机或三维视角监督。</p>
+<p>第二阶段处理约 500 万次单图采样，完成后丢弃 Predictor，保留 Student，并继续使用第一阶段的文本编码器和图像投影层。它是建立在昂贵第一阶段上的追加训练，不能把整个方法的成本概括成“只训练了 500 万张图”。</p>
+<h2 id="section-4">5. 为什么空间能力增强后，语言能力还能保留？</h2>
+<p>论文将类似的第二阶段训练应用到 CLIP 和 SigLIP 2，也改善了状态探针结果，但原来的图文对齐下降更明显。ALPS 的变化则较小。</p>
+<p>作者提出的解释涉及全局语言接口：ALPS 使用线性投影与 patch 平均池化，因此</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mi>W</mi><mrow><mo fence="true">(</mo><mfrac><mn>1</mn><mi>N</mi></mfrac><munder><mo>∑</mo><mi>i</mi></munder><msub><mi>z</mi><mi>i</mi></msub><mo fence="true">)</mo></mrow><mo>=</mo><mfrac><mn>1</mn><mi>N</mi></mfrac><munder><mo>∑</mo><mi>i</mi></munder><mi>W</mi><msub><mi>z</mi><mi>i</mi></msub><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+W\left(\frac{1}{N}\sum_i z_i\right)
+=\frac{1}{N}\sum_i Wz_i.
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:3.0277em;vertical-align:-1.2777em;"></span><span class="mord mathnormal" style="margin-right:0.1389em;">W</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="minner"><span class="mopen delimcenter" style="top:0em;"><span class="delimsizing size4">(</span></span><span class="mord"><span class="mopen nulldelimiter"></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.3214em;"><span style="top:-2.314em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.109em;">N</span></span></span><span style="top:-3.23em;"><span class="pstrut" style="height:3em;"></span><span class="frac-line" style="border-bottom-width:0.04em;"></span></span><span style="top:-3.677em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord">1</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.686em;"><span></span></span></span></span></span><span class="mclose nulldelimiter"></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mop op-limits"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.05em;"><span style="top:-1.8723em;margin-left:0em;"><span class="pstrut" style="height:3.05em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span><span style="top:-3.05em;"><span class="pstrut" style="height:3.05em;"></span><span><span class="mop op-symbol large-op">∑</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:1.2777em;"><span></span></span></span></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.044em;">z</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:-0.044em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mclose delimcenter" style="top:0em;"><span class="delimsizing size4">)</span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:2.5991em;vertical-align:-1.2777em;"></span><span class="mord"><span class="mopen nulldelimiter"></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.3214em;"><span style="top:-2.314em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.109em;">N</span></span></span><span style="top:-3.23em;"><span class="pstrut" style="height:3em;"></span><span class="frac-line" style="border-bottom-width:0.04em;"></span></span><span style="top:-3.677em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord">1</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.686em;"><span></span></span></span></span></span><span class="mclose nulldelimiter"></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mop op-limits"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.05em;"><span style="top:-1.8723em;margin-left:0em;"><span class="pstrut" style="height:3.05em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span><span style="top:-3.05em;"><span class="pstrut" style="height:3.05em;"></span><span><span class="mop op-symbol large-op">∑</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:1.2777em;"><span></span></span></span></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal" style="margin-right:0.1389em;">W</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.044em;">z</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:-0.044em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mord">.</span></span></span></span></span></eqn></section><p>如果局部更新的均值接近零，即 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mo>∑</mo><mi>i</mi></msub><mi mathvariant="normal">Δ</mi><msub><mi>z</mi><mi>i</mi></msub><mo>≈</mo><mn>0</mn></mrow><annotation encoding="application/x-tex">\sum_i\Delta z_i\approx0</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:1.0497em;vertical-align:-0.2997em;"></span><span class="mop"><span class="mop op-symbol small-op" style="position:relative;top:0em;">∑</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.162em;"><span style="top:-2.4003em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2997em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord">Δ</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.044em;">z</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:-0.044em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">≈</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.6444em;"></span><span class="mord">0</span></span></span></span></eq>，patch 特征可以改变，而全局图像表示变化较小。</p>
+<p>这个解释提供了一个值得研究的机制，但线性恒等式本身不能证明训练一定产生零均值更新，也不能保证其他任务上的语义始终不变。这里应保留“可能解释实验现象”的定位。</p>
+<p>对模型设计更直接的启发是：局部状态表征如何更新、全局语义如何读取，可能需要一起考虑。只看局部特征变强，很容易忽略原来语言接口已经发生漂移。</p>
+<h2 id="section-5">6. 三类下游实验，要分别理解</h2>
+<h3 id="section-6">状态探针：信息能不能被读出来？</h3>
+<p>冻结视觉编码器，训练约 2.5M 参数的轻量 Probe，读取过去 16 帧特征。它既评估当前状态读取，也评估给定未来真实机器人动作后，预测 1 秒或 3 秒之后状态的能力。</p>
+<p>平均相对位置误差以 ALPS Stage 1 为基准：</p>
+<table>
+<thead>
+<tr>
+<th>编码器</th>
+<th>相对误差，越低越好</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ALPS Stage 1</td>
+<td>1.000</td>
+</tr>
+<tr>
+<td>ALPS</td>
+<td>0.829</td>
+</tr>
+<tr>
+<td>V-JEPA 2-L</td>
+<td>0.829</td>
+</tr>
+<tr>
+<td>C-RADIOv3-B</td>
+<td>0.864</td>
+</tr>
+<tr>
+<td>DINOv3-B</td>
+<td>0.870</td>
+</tr>
+<tr>
+<td>SigLIP 2-B</td>
+<td>1.160</td>
+</tr>
+</tbody>
+</table>
+<p>0.829 对应相对第一阶段约 17.1% 的误差下降。ALPS 与更大的 V-JEPA 2-L 在该汇总指标上持平，不能据此说两者所有能力相同。后者的当前状态读取更好，ALPS 的 3 秒动作条件预测更好。<a href="https://arxiv.org/html/2610.30120v1#S4">论文 Table 1</a></p>
+<p>这里的预测是带未来动作输入的监督任务，不等于已经实现自主规划。</p>
+<h3 id="section-7">策略学习：特征能不能支持动作？</h3>
+<p>冻结编码器后，使用相同结构的行为克隆策略，在四个 LIBERO suite 上训练：</p>
+<table>
+<thead>
+<tr>
+<th>语言接口</th>
+<th>ALPS</th>
+<th>SigLIP 2</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>统一使用 BERT</td>
+<td>83.4%</td>
+<td>81.4%</td>
+</tr>
+<tr>
+<td>使用各自文本编码器</td>
+<td>85.5%</td>
+<td>84.8%</td>
+</tr>
+</tbody>
+</table>
+<p>85.5% 是四个 suite 的平均成功率。它支持 ALPS 是一个有竞争力的策略骨干，但 0.7 个百分点的均值差异不足以单独证明显著优势。</p>
+<p>另一个不同的比较是：ALPS 原生文本编码器相对 BERT 的收益。三次独立训练的平均提升为 3.1 个百分点，95% 置信区间为 [-0.9, +7.1]，包含零。不要把这个区间误用成 ALPS 对 SigLIP 2 的显著性检验。<a href="https://arxiv.org/html/2610.30120v1#S5.SS3">论文 §5.3 与补充材料 S2</a></p>
+<h3 id="section-8">世界模型规划：预测能不能帮忙选动作？</h3>
+<p>冻结编码器，在 token 上训练动力学模型，再用 CEM 优化动作序列。PushT、Wall、PointMaze、Granular、Rope 使用 DINO-WM 框架；Reacher 使用 LeWorldModel。</p>
+<table>
+<thead>
+<tr>
+<th>任务</th>
+<th>ALPS 结果</th>
+<th>如何理解</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>PushT</td>
+<td>成功率 90%</td>
+<td>与 C-RADIOv3 并列最高</td>
+</tr>
+<tr>
+<td>Wall</td>
+<td>成功率 92%</td>
+<td>与 DINOv2 并列最高</td>
+</tr>
+<tr>
+<td>PointMaze</td>
+<td>成功率 100%</td>
+<td>所测编码器全部达到 100%</td>
+</tr>
+<tr>
+<td>Granular</td>
+<td>Chamfer 0.176</td>
+<td>低于 C-RADIOv3 的 0.180</td>
+</tr>
+<tr>
+<td>Rope</td>
+<td>Chamfer 0.750</td>
+<td>高于 C-RADIOv3 的 0.558</td>
+</tr>
+<tr>
+<td>Reacher</td>
+<td>成功率 78.7%</td>
+<td>低于 DINOv3 的 86.0%</td>
+</tr>
+</tbody>
+</table>
+<p>成功率越高越好，Chamfer 距离越低越好。结果体现的是跨任务的竞争力，并非全面领先。<a href="https://arxiv.org/html/2610.30120v1#S5.SS2">论文 Table 3</a></p>
+<p>另外，在五步未来 token 的状态读取评测中，第二阶段相对第一阶段的误差下降分别为 PushT 28%、Reacher 17%、Granular 13%、Rope 11%。它说明空间表征改进可以传递到下游预测，而不只体现在静态感知指标上。</p>
+<h2 id="section-9">7. “预测可以看见”需要额外的解码器</h2>
+<p>评测时，作者为冻结 token 训练轻量适配器，将其映射到 SDXL VAE latent，再用冻结 VAE Decoder 生成图像。它与第一阶段用于重建训练的卷积 Decoder 是不同的组件。</p>
+<p>因此，可视化未来的链条是：</p>
+<p><strong>动力学模型预测 token → 训练好的评测适配器 → VAE Decoder → 图像。</strong></p>
+<p>加载 ALPS Encoder 本身不等于已经具备完整图像生成能力。渲染出的预测也适合用于检查误差，不能仅凭画面看起来合理，就认定物理轨迹正确。</p>
+<p>重建 L1 误差方面，ALPS 为 0.120，优于 SigLIP 2 的 0.264，但不及 MAE 的 0.109 和 OpenVision 3 的 0.104。这正好体现它的定位：兼顾状态、语言和像素接口。</p>
+<h2 id="section-10">8. 最有意思的结果，是重建与状态信息并不总是同向改善</h2>
+<p>在第一阶段十分之一预算的消融中，删除像素重建目标反而降低了状态探针误差，但重建能力变差。</p>
+<p>这个结果提醒我们：用于控制的“好表示”和用于还原所有视觉细节的“好表示”不完全相同。有限模型容量需要在不同目标之间分配，背景纹理和对象状态可能争用表示能力。</p>
+<p>但这也不意味着应该统一删除重建目标。如果目标包含预测可视化和模型诊断，保留像素接口有实际价值；如果只追求某类状态估计，则可以探索不同的权重。</p>
+<p>对于 WAM，值得问的不是重建损失越大或越小是否更好，而是哪些信息必须保留、哪些变化可以忽略，以及这种取舍会怎样影响动作。</p>
+<h2 id="section-11">9. 对 VLA、接触操作和失败恢复的启发</h2>
+<p>以下是研究设想，不是论文已经验证的机器人能力。</p>
+<p>可以固定同一个策略或动力学模型，分别接入 ALPS、DINOv3、V-JEPA 2，比较三类数据：正常执行、接触失败、失败恢复。</p>
+<p>重点不只看平均位置误差，还可以检查：</p>
+<ul>
+<li>物体看起来位置相近，但实际处于抓稳、滑落或未接触状态时，特征能否区分？</li>
+<li>短时预测准确后，连续滚动预测是否仍保持状态一致？</li>
+<li>遇到遮挡、相机变化和新背景时，语言接口与局部状态信息是否一起稳定？</li>
+<li>用像素解码检查预测时，能否发现对动作有影响的错误，而不只是画质差异？</li>
+</ul>
+<p>与 <a href="PhysWord.html">PhysWord</a> 放在一起看，二者的着力点不同：ALPS 改善世界模型输入端的状态表征，PhysWord 用动作语义组织未来动态表示。二者能否结合，需要检查 latent 接口、训练目标和信息保留方式，不能只因为都使用 latent 就直接拼接。</p>
+<p>目前 ALPS 的实验主要在仿真，尚未验证真实机器人部署；语言条件控制和世界模型规划也是分别评估，还没有展示语言目标、latent planning 与像素检查组成的完整闭环。</p>
+<p>我最看重的是带几何查询的第二阶段，以及它提出的评测方式：一个视觉骨干既要让状态容易读出，也要让下游预测和控制受益，还要尽量保留原有接口。静态图像可以为这件事提供很强的起点，后续仍需要动作与时序数据来检验它的边界。</p>
+<footer><a href="../index.html#notes">← All notes</a></footer></article></main></body></html>

@@ -1,0 +1,26 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>λ₀：用第一人称全身数据训练通用人形机器人 · Jieming Li</title><link rel="stylesheet" href="../assets/styles.css"><link rel="stylesheet" href="../assets/notes.css"><link rel="stylesheet" href="vendor/katex/katex.min.css"></head><body class="note-page"><header class="note-nav"><a href="../index.html#notes">← Notes</a><a href="../index.html">Jieming Li</a></header><main class="note-layout"><aside class="note-outline"><p class="eyebrow">On this page</p><nav aria-label="目录"><ol><li><a href="#section-0">1. 它想解决什么问题</a></li><li><a href="#section-1">2. 方法怎么做</a></li><li><a href="#section-2">3. 实验说明了什么</a></li><li><a href="#section-3">4. 还缺什么</a></li><li><a href="#section-4">5. 我的判断</a></li></ol></nav></aside><article class="note-content" id="content"><p class="eyebrow">Research notebook · 研究笔记</p><h1 id="noteTitle">λ₀：用第一人称全身数据训练通用人形机器人</h1>
+<p>论文： <a href="https://arxiv.org/pdf/2610.00438">Towards a General Humanoid Loco-Manipulation Model via Egocentric Whole-Body Human Data Pretraining</a></p>
+<p>这篇工作的出发点很直接：人类行为视频很多，机器人全身示教数据却很少。能不能先从人类的第一人称全身数据中学到“怎么观察、怎么移动、怎么用双手操作”，再用少量机器人数据把它变成可执行的策略？</p>
+<h2 id="section-0">1. 它想解决什么问题</h2>
+<p>现有 VLA 或机器人策略通常更擅长机械臂和手部动作。真正的人形机器人任务还要同时处理走路、转身、身体平衡、双手协作和手指接触。只用手部数据，模型很难知道移动身体和操作物体之间的关系；只用机器人示教，又会受数据量和设备成本限制。</p>
+<p>作者因此构建 HumanVerse-500：约 500 小时真实环境中的人类全身操作数据，包含第一人称视频、身体运动和手部运动。核心问题不是把人的每个关节角原样复制给机器人，而是从人的行为中抽取可迁移的任务和运动表示。</p>
+<h2 id="section-1">2. 方法怎么做</h2>
+<p>训练分成三个阶段：</p>
+<ol>
+<li><strong>Hand Motion Pretraining</strong>：用第一人称数据预训练手部操作，预测手腕姿态和手部关键点，先学会物体在哪里、手怎样接近和接触。</li>
+<li><strong>Whole-Body Mid-training</strong>：把人类全身动作转换成与 G1 对应的表示，包含 64 维 SONIC 运动 latent 和 12 维双手命令，学习行走、姿态和双手操作的协调。</li>
+<li><strong>Robot Post-training</strong>：用真实机器人示教把共享表示接到具体机器人的控制接口上。</li>
+</ol>
+<p>这条路线的重点是“共享主干、分开接口”。人和机器人身体不同，不能把动作坐标直接硬 retarget；更合理的做法是让模型共享任务和运动的中间表示，再在末端适配不同的 embodiment。</p>
+<p>整体可以理解为：</p>
+<p><strong>人类第一人称视频与运动 → 手部能力 → 全身协调 → 少量机器人数据适配。</strong></p>
+<h2 id="section-2">3. 实验说明了什么</h2>
+<p>在 SIMPLE 基准上，λ₀ 达到 90.0% 成功率。四个真实机器人任务的平均成功率为 62.5%，任务进度为 80.4%。最有说服力的是消融：去掉 Whole-Body Mid-training 后，真机成功率从 62.5% 降到 22.5%。</p>
+<p>这说明全身人类数据的价值不只是增加样本数量。它确实补上了“手在做事时身体应该如何配合”这一层能力。单纯堆更多手部视频，很难替代这种训练。</p>
+<h2 id="section-3">4. 还缺什么</h2>
+<p>人类动作到机器人动作的转换仍然依赖目标机器人和控制接口。HumanVerse-500 很大，但数据中的运动表示如何适配不同身高、关节数量和手部结构，仍然是具体系统问题。</p>
+<p>另外，实验任务数量有限，真机成功率距离开放环境中的通用人形策略还有明显差距。第一人称视频也更多提供视觉和运动先验，不能自动提供机器人需要的接触力、摩擦和安全约束。</p>
+<h2 id="section-4">5. 我的判断</h2>
+<p>λ₀ 的价值在于把人类数据的作用从“模仿人的动作”推进到“学习全身行为结构”。Stage II 的消融尤其值得重视：Whole-Body 训练可能是连接人类视频与机器人控制的关键中间层。</p>
+<p>但它还不能被简单称为跨 embodiment 通用策略。真正的通用性需要在不同人形平台、不同手部结构和不同接触任务上验证。更现实的定位是：用海量人类数据学习先验，再用相对少量的机器人数据完成身体和控制接口的落地。</p>
+<footer><a href="../index.html#notes">← All notes</a></footer></article></main></body></html>

@@ -1,0 +1,907 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI 性能分析与插装：工具原理、Attention 优化与集群诊断 · Jieming Li</title><link rel="stylesheet" href="../assets/styles.css"><link rel="stylesheet" href="../assets/notes.css"><link rel="stylesheet" href="vendor/katex/katex.min.css"></head><body class="note-page"><header class="note-nav"><a href="../index.html#notes">← Notes</a><a href="../index.html">Jieming Li</a></header><main class="note-layout"><aside class="note-outline"><p class="eyebrow">On this page</p><nav aria-label="目录"><ol><li><a href="#section-0">1. 首先明确：我们希望什么变快</a></li><li><a href="#section-2">2. FLOPs、GPU 利用率和 MFU 分别说明什么</a></li><li><a href="#section-6">3. 瓶颈：计算、访存、通信和调度</a></li><li><a href="#section-8">4. 插装原理：在正确的位置记录事件</a></li><li><a href="#section-14">5. 动态采集与观察者效应</a></li><li><a href="#section-17">6. 四种工具怎样配合，以及结果怎样读</a></li><li><a href="#section-21">7. Attention 案例：怎样从记录推导出 5.9 倍加速</a></li><li><a href="#section-30">8. 多进程 Trace：从“某张卡在等”找到“谁让它等”</a></li><li><a href="#section-33">9. Trace 压缩课题：从 500GB 到 5GB 是什么要求</a></li><li><a href="#section-38">10. 实际调用：从环境确认到读回结果</a></li><li><a href="#section-47">11. 与 RL、VLA 和仿真研究的联系</a></li><li><a href="#section-51">12. 下一步可以做什么</a></li><li><a href="#section-54">参考资料</a></li></ol></nav></aside><article class="note-content" id="content"><p class="eyebrow">Research notebook · 研究笔记</p><h1 id="noteTitle">AI 性能分析与插装：工具原理、Attention 优化与集群诊断</h1>
+<p>AI 性能分析要回答一个具体问题：<strong>程序为什么慢，哪些观测支持这个判断，修改以后完整任务到底快了多少？</strong></p>
+<p>这份笔记以一个两层 TinyDecoder 的 Attention 优化为主例。报告中的四步 decode 从 18.206ms 降到 3.099ms，约加速 5.9 倍。理解这个结果，需要把算子调用次数、张量形状、CPU/GPU 时间线、kernel 硬件指标和独立基准测量对应起来。</p>
+<p>全文沿着 <strong>性能指标 → 插装与工具原理 → Attention 案例 → 大规模 Trace → 实际调用与研究方向</strong> 展开。基础概念服务于后面的诊断，工具命令则帮助把同样的方法用到自己的程序上。</p>
+<p><strong>资料范围与日期</strong>：本次于 2026-10-30 根据以下材料改写。</p>
+<ul>
+<li><span class="unavailable-source" title="本地参考资料，未在网站公开">《交流汇报-性能分析工具-final.pptx》</span>：沈哲浩于 2026-10-29 的工具介绍与 Attention 案例。文件实际有 21 页，本文按实际页序引用；中间插入了 4 页截图，后续页脚编号与实际页序不同。</li>
+<li><span class="unavailable-source" title="本地参考资料，未在网站公开">《02-调用说明书.md》</span>：环境检查、采集命令、文件阅读及环境相关问题。</li>
+<li>前次提供的会议纪要与部分逐字稿：补充性能指标、插装、1024 卡排障和 Trace 压缩讨论。</li>
+</ul>
+<p>PPT 已给出 Attention 实验配置、计数与基准结果。以下将其作为<strong>报告中的实验数据</strong>解释；附件未包含 <code>model.py</code>、<code>benchmark.json</code>、原始 Trace 等文件，本次未重跑实验。说明书中的 Windows CPU 接口测试、WSL GPU 实验和通用命令模板分别使用各自的统计口径。</p>
+<h2 id="section-0">1. 首先明确：我们希望什么变快</h2>
+<p>同一个程序可能有多个性能目标，优化一个目标时，另一个目标未必同时改善。</p>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th>含义</th>
+<th>在 AI 工作负载中的例子</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>吞吐量（Throughput）</td>
+<td>单位时间完成的有效工作量</td>
+<td>samples/s、tokens/s、训练 steps/s</td>
+</tr>
+<tr>
+<td>延迟（Latency）</td>
+<td>指定任务从开始到完成的时间</td>
+<td>一次推理、一轮控制、一个训练 step 的耗时</td>
+</tr>
+<tr>
+<td>P99 延迟</td>
+<td>约 99% 的观测延迟不超过的分位点</td>
+<td>一批请求中较慢部分的响应时间</td>
+</tr>
+<tr>
+<td>端到端时间</td>
+<td>完整流程的完成时间</td>
+<td>数据读取、推理、环境交互和更新共同决定的 RL 迭代耗时</td>
+</tr>
+</tbody>
+</table>
+<p>例如，把更多请求合成一个 batch，可能提高 tokens/s，也可能让请求等待更久。报告“性能提升”时，应同时写清测量对象、输入规模和完成条件。</p>
+<h3 id="section-1">1.1 为什么少量慢任务能影响整个系统</h3>
+<p>会议提到的尾部延迟放大，适用于需要等待多个子任务全部完成的场景。若第 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>i</mi></mrow><annotation encoding="application/x-tex">i</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6595em;"></span><span class="mord mathnormal">i</span></span></span></span></eq> 个子任务耗时为 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>T</mi><mi>i</mi></msub></mrow><annotation encoding="application/x-tex">T_i</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1389em;">T</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:-0.1389em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span></eq>，忽略其他开销时：</p>
+<p>$
+T_{\mathrm{job}}=\max(T_1,T_2,\ldots,T_n).
+$</p>
+<p>假设各子任务独立，每个任务超过某个延迟阈值的概率都是 1%，那么至少一个子任务超过该阈值的概率为：</p>
+<p>$
+P(\text{至少一个超时})=1-0.99^n.
+$</p>
+<p>当 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>n</mi><mo>=</mo><mn>100</mn></mrow><annotation encoding="application/x-tex">n=100</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.4306em;"></span><span class="mord mathnormal">n</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.6444em;"></span><span class="mord">100</span></span></span></span></eq> 时，这个概率约为 63.4%；当 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>n</mi><mo>=</mo><mn>1000</mn></mrow><annotation encoding="application/x-tex">n=1000</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.4306em;"></span><span class="mord mathnormal">n</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.6444em;"></span><span class="mord">1000</span></span></span></span></eq> 时，约为 99.996%。这里的“超时”指超过所选阈值，不一定是程序触发 timeout。</p>
+<p>这解释了为什么单卡看起来很少出现的慢事件，在需要同步的大规模任务里可能频繁拖慢整步。真实集群中的负载和故障常有相关性，上式只是独立假设下的示意，不能直接预测实际集群的 P99。</p>
+<h2 id="section-2">2. FLOPs、GPU 利用率和 MFU 分别说明什么</h2>
+<p>这几个指标很容易混用，但它们回答的问题不同。</p>
+<h3 id="section-3">2.1 FLOPs 是运算量，FLOP/s 是运算速率</h3>
+<p>本文统一使用：</p>
+<ul>
+<li><strong>FLOPs</strong>：浮点运算次数，例如一次模型前向需要多少浮点运算；</li>
+<li><strong>FLOP/s</strong>：每秒浮点运算次数，例如芯片的峰值算力；</li>
+<li><strong>TFLOP/s</strong>：<eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msup><mn>10</mn><mn>12</mn></msup></mrow><annotation encoding="application/x-tex">10^{12}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8141em;"></span><span class="mord">1</span><span class="mord"><span class="mord">0</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8141em;"><span style="top:-3.063em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight">12</span></span></span></span></span></span></span></span></span></span></span></span></eq> FLOP/s。</li>
+</ul>
+<p>实际资料常把 FLOPS、FLOPs 混写，阅读时要结合单位判断。一次乘加通常按两次浮点运算计数，比较不同结果前也要统一这个约定。</p>
+<h3 id="section-4">2.2 GPU 利用率高，只能说明某种活动持续存在</h3>
+<p>以 <code>nvidia-smi</code> 的 GPU utilization 为例，官方定义是采样窗口内至少有一个 kernel 执行的时间比例。它没有直接报告所有计算单元完成有效数学运算的比例。<a href="https://docs.nvidia.com/deploy/nvidia-smi/index.html">NVIDIA-SMI 文档</a></p>
+<p>因此，一个持续运行、但主要在等待数据或执行低效指令的 kernel，也可能对应很高的利用率。会议中的“假忙”，可以理解为<strong>设备持续活跃，但完成目标工作的效率较低</strong>。</p>
+<p>另外，显存占用、访存带宽、SM occupancy 和 GPU utilization 是不同指标。显存装得满，不能推出带宽已经用满；occupancy 高，也不能单独推出程序高效。</p>
+<h3 id="section-5">2.3 MFU 要根据模型的有效工作量计算</h3>
+<p>MFU 的完整名称是 <strong>Model FLOPs Utilization</strong>。一个常用写法是：</p>
+<p>$
+\mathrm{MFU}
+=\frac{F_{\mathrm{model,step}}/T_{\mathrm{step}}}
+{N_{\mathrm{device}}P_{\mathrm{peak,device}}}.
+$</p>
+<p>其中 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>F</mi><mrow><mi mathvariant="normal">m</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">d</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">l</mi><mo separator="true">,</mo><mi mathvariant="normal">s</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">p</mi></mrow></msub></mrow><annotation encoding="application/x-tex">F_{\mathrm{model,step}}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.9694em;vertical-align:-0.2861em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1389em;">F</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:-0.1389em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">model</span><span class="mpunct mtight">,</span><span class="mord mathrm mtight">step</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span></span></span></span></eq> 是一个全局 step 所需的模型运算量，<eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>T</mi><mrow><mi mathvariant="normal">s</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">p</mi></mrow></msub></mrow><annotation encoding="application/x-tex">T_{\mathrm{step}}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.9694em;vertical-align:-0.2861em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1389em;">T</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:-0.1389em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">step</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span></span></span></span></eq> 是对应实测时间，分母是全部设备在指定精度和运算模式下的理论峰值之和。不能把局部设备的工作量与整个集群的峰值混用。</p>
+<p>PaLM 对稠密 decoder-only Transformer 给出的简化估算，在忽略 Attention 的额外开销时，每个训练 token 约需 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>6</mn><msub><mi>N</mi><mrow><mi mathvariant="normal">p</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">m</mi></mrow></msub></mrow><annotation encoding="application/x-tex">6N_{\mathrm{param}}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.9694em;vertical-align:-0.2861em;"></span><span class="mord">6</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.109em;">N</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:-0.109em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">param</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span></span></span></span></eq> 次运算。因此也可用全局 tokens/s 估算 MFU。完整计算还应考虑结构相关开销；MoE、长序列和不同任务需要相应的运算量模型。<a href="https://arxiv.org/html/2204.02311v5">PaLM，第 4.1 节与附录 B</a></p>
+<p><strong>MFU 的分子侧重模型需要完成的工作。</strong> PaLM 的口径不把 activation recomputation 产生的重复运算计入模型必需 FLOPs；把这些运算算进去，会得到另一种硬件运算利用率口径。</p>
+<p>因此，会议中的“实测算力除以峰值”还需要补充：实测的是哪种工作量，峰值对应哪种精度、稀疏性和设备规模。MFU 适合检查训练系统效率，推理和机器人控制仍应结合吞吐、延迟与任务结果判断。</p>
+<h2 id="section-6">3. 瓶颈：计算、访存、通信和调度</h2>
+<p>GPU 上执行的 kernel，是一段设备端程序。一个 PyTorch 算子可能启动多个 kernel，多个算子也可能经编译融合成一个 kernel。因此，算子和 kernel 不能总是一一对应。</p>
+<p>会议把主要开销概括为 Kernel、Memory、Communication。为了定位问题，可以进一步区分：</p>
+<table>
+<thead>
+<tr>
+<th>类型</th>
+<th>主要成本</th>
+<th>值得检查的现象</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>计算</td>
+<td>矩阵乘法、归约和其他指令</td>
+<td>kernel 较长，是否接近对应计算能力</td>
+</tr>
+<tr>
+<td>设备内访存</td>
+<td>HBM、缓存、shared memory 与寄存器之间的数据访问</td>
+<td>是否反复读写中间张量、访问是否高效</td>
+</tr>
+<tr>
+<td>主机与设备传输</td>
+<td>CPU 内存与 GPU 显存之间的数据移动</td>
+<td>小块传输、同步拷贝、数据准备延迟</td>
+</tr>
+<tr>
+<td>设备间通信</td>
+<td>AllReduce、AllGather、Send/Recv 等</td>
+<td>消息大小、到达时间差、链路和计算重叠</td>
+</tr>
+<tr>
+<td>主机调度与同步</td>
+<td>Python、运行时调用、任务提交和等待</td>
+<td>GPU 空档、频繁同步、kernel 启动间隔</td>
+</tr>
+</tbody>
+</table>
+<p>原材料把 Memory 描述成“数据从外部搬到 GPU 内部”，范围偏窄。分析一个 GPU kernel 时，设备内部不同存储层级之间的访问同样关键。</p>
+<p>通信在大规模并行中可能成为主要瓶颈，但这个结论需要由具体工作负载验证。小模型可能受启动开销限制，数据管线可能供给不足，大模型推理又可能受显存带宽限制。</p>
+<h3 id="section-7">3.1 为什么各部分耗时不能直接相加</h3>
+<p>计算、传输和通信可能重叠。如果某次通信耗时 20ms，其中 15ms 与独立计算重叠，直接把 20ms 全算作可消除的整步开销，就会夸大优化空间。</p>
+<p>更有用的问题是：<strong>这次事件是否推迟了后续必需工作，最终使任务更晚完成？</strong></p>
+<p>可以把程序抽象成带依赖的事件图。若事件 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>v</mi></mrow><annotation encoding="application/x-tex">v</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.4306em;"></span><span class="mord mathnormal" style="margin-right:0.0359em;">v</span></span></span></span></eq> 的时长为 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>d</mi><mi>v</mi></msub></mrow><annotation encoding="application/x-tex">d_v</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8444em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal">d</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0359em;">v</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span></eq>，只考虑已建模的依赖和资源约束，则完成时间可递推为：</p>
+<p>$
+C(v)=d_v+\max_{u\in\operatorname{pred}(v)}C(u).
+$</p>
+<p>这说明性能分析既要看事件持续多久，也要看依赖它的工作何时才能开始。实际系统还需要把 stream 顺序、资源竞争和同步约束纳入图中。</p>
+<h2 id="section-8">4. 插装原理：在正确的位置记录事件</h2>
+<p>插装（Instrumentation）是在程序或运行时的特定位置加入观测逻辑，记录事件名称、时间、线程、设备和关联关系。</p>
+<p>最简单的形式是“开始时记录一次，结束时记录一次”。但 AI 系统同时存在 CPU、GPU、多 stream 和多个进程，必须先确定记录的是哪一层的开始与结束。</p>
+<h3 id="section-9">4.1 CPU 提交完成，不等于 GPU 执行完成</h3>
+<p>典型 CUDA 调用是异步的。CPU 把工作提交给 GPU 后，可以继续执行后面的代码。<a href="https://docs.pytorch.org/docs/2.9/notes/cuda.html">PyTorch CUDA 执行语义</a></p>
+<pre><code class="language-text">时间向右 →
+
+CPU 线程：   提交 A ─ 提交 B ─ 继续运行 ───────── 等待结果
+GPU stream：       [ 执行 A ] [ 执行 B ]
+</code></pre>
+<p>所以，用 CPU 计时器直接包住 <code>y = model(x)</code>，通常测到的是主机侧调用和提交过程；若调用内发生同步，结果又会包含相应等待。要测 GPU 工作完成，必须明确完成边界。</p>
+<p>两种计时回答不同问题：</p>
+<ul>
+<li><strong>同步后用 CPU 时钟测量</strong>：观察指定代码段从主机视角到相关设备工作完成所需的时间；</li>
+<li><strong>使用 CUDA Event</strong>：观察设备 stream 中两个事件之间的经过时间。</li>
+</ul>
+<p>微基准中可在测量边界同步。若给生产代码的每个算子都加同步，会改变原有重叠关系，测到另一个执行过程。</p>
+<h3 id="section-10">4.2 框架层：知道程序在做什么</h3>
+<p>PyTorch 的算子记录，以及用户添加的 <code>record_function</code> 区间，可以赋予执行事件语义。例如把一段代码标为 <code>rollout</code>、<code>forward</code> 或 <code>optimizer_step</code>，方便对应业务阶段。<a href="https://docs.pytorch.org/docs/2.9/generated/torch.autograd.profiler.record_function.html">record_function 文档</a></p>
+<p>其思路是在区间进入和退出时触发记录逻辑。框架层方便解释“这是什么操作”，但一个 CPU 区间本身不能替代 GPU 时间线。</p>
+<p>这里还要区分 Python 中用于标记区域的 <code>record_function</code> 接口，以及框架内部更广泛的算子观测机制。不能据此假定所有设备后端都经由同一条实现路径采集。</p>
+<h3 id="section-11">4.3 CUDA 层：知道工作何时真正执行</h3>
+<p>CUPTI 提供两类相关机制：</p>
+<table>
+<thead>
+<tr>
+<th>机制</th>
+<th>主要观测对象</th>
+<th>适合回答的问题</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Callback API</td>
+<td>CUDA API 进入、退出及指定运行时事件</td>
+<td>CPU 在何时发起某次 CUDA 调用</td>
+</tr>
+<tr>
+<td>Activity API</td>
+<td>CPU/GPU 活动记录，经过缓冲区交付</td>
+<td>kernel、拷贝等活动在何时执行</td>
+</tr>
+</tbody>
+</table>
+<p>关联标识（correlation ID）帮助工具把一次主机 API 调用与它发起的设备活动对应起来。Activity API 的异步交付是指记录经缓冲区返回，不代表用交付时刻作为事件发生时刻。<a href="https://docs.nvidia.com/cupti/main/main.html">CUPTI 使用指南</a></p>
+<p>GPU 活动的时间戳还需要映射到可比较的时间域。CUPTI 文档明确描述了 GPU 时间戳向 CPU 时间域的转换；问题涉及时钟校准，而不只是两个时钟“精度不一致”。<a href="https://docs.nvidia.com/cupti/api/group__CUPTI__ACTIVITY__API.html">CUPTI Activity API 时间戳说明</a></p>
+<h3 id="section-12">4.4 CUDA Event：适合测量明确的设备区间</h3>
+<p>CUDA Event 在指定 stream 中记录事件，可计算两个 Event 之间的毫秒数。它也能用于同步；PyTorch 的 <code>torch.cuda.Event</code> 是对相关 CUDA 能力的封装。<a href="https://docs.pytorch.org/docs/2.9/generated/torch.cuda.Event.html">CUDA Event 文档</a></p>
+<p>原纪要把 CUDA Event、C10 和 Kineto 串成一条底层依赖，容易误解。更清楚的分法是：</p>
+<ul>
+<li>CUDA Event 是 CUDA 提供的事件机制；</li>
+<li>C10 是 PyTorch 基础设施的一部分；</li>
+<li>Kineto 是 CPU/GPU profiling 库，可为 PyTorch Profiler 提供相关能力。<a href="https://github.com/pytorch/kineto">Kineto 官方仓库</a></li>
+</ul>
+<p>理解设备计时不需要把三者当成同一个组件。会议提到的“热路径/冷路径”具体对应哪些函数和版本，现有材料不足以确认，记为<strong>待复核</strong>。</p>
+<h3 id="section-13">4.5 通信层：补充一次集体操作的语义</h3>
+<p>GPU 上出现一个很长的通信 kernel 时，我们还想知道：它属于哪个 communicator、哪次 collective、涉及哪些 rank、传输多少数据。</p>
+<p>NCCL 的 Profiler Plugin 用于扩展通信观测。官方支持通过 <code>NCCL_PROFILER_PLUGIN</code> 指定插件库；插件必须与实际 NCCL 版本和接口匹配。设置环境变量负责选择和加载插件，具体事件记录能力由插件实现决定。<a href="https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/env.html#nccl-profiler-plugin">NCCL 环境变量文档</a></p>
+<p>会议另一个案例使用国产加速卡，其采集后端和通信库未给出。可以借鉴相同的分析思路，但不能直接假定其底层也是 CUDA/CUPTI/NCCL。</p>
+<h2 id="section-14">5. 动态采集与观察者效应</h2>
+<h3 id="section-15">5.1 “按需抓取”需要区分已有能力与运行时附加</h3>
+<p>会议提出：一个已经训练多日的任务出现异常时，应能按需抓取短时间 Trace。</p>
+<p>这里至少有两种机制：</p>
+<ol>
+<li>程序已经接入采集组件，平时关闭或少量记录，需要时打开详细采集。</li>
+<li>工具支持向运行中的进程附加相应组件，再启动采集。</li>
+</ol>
+<p>PyTorch Profiler 提供动态开关部分活动采集的接口；这以进程已经运行相关 profiler 上下文为前提。CUPTI 也提供动态 attach/detach 机制，但实际工具仍需解决进程内接入、版本支持和安全的生命周期管理。<a href="https://docs.pytorch.org/docs/2.9/profiler.html#torch.profiler._KinetoProfile.toggle_collection_dynamic">PyTorch Profiler 动态采集</a>、<a href="https://docs.nvidia.com/cupti/main/main.html#dynamic-attach-and-detach">CUPTI 动态附加与分离</a></p>
+<p>因此，会议里的“遥控器”可以理解为采集控制入口。它是否支持完全未预埋的任务，现有材料没有说明。</p>
+<h3 id="section-16">5.2 不改变计算语义，仍然可能改变运行时序</h3>
+<p>插装希望保持程序的功能语义，但记录事件需要执行代码、写缓冲区并消耗资源。即使输出仍在允许的数值误差内，调度和重叠也可能发生变化。</p>
+<p>可以先用下面的量检查扰动：</p>
+<p>$
+\mathrm{Overhead}
+=\frac{T_{\mathrm{profiled}}-T_{\mathrm{baseline}}}
+{T_{\mathrm{baseline}}}.
+$</p>
+<p>该比值应在相同配置和相近运行阶段下重复测量，并报告波动。较小的总开销也不能保证每个短 kernel、每次通信的局部时序都未受影响。</p>
+<table>
+<thead>
+<tr>
+<th>测量陷阱</th>
+<th>影响</th>
+<th>应对方法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>高频探针</td>
+<td>记录成本与被测事件耗时接近</td>
+<td>缩小采集范围，比较开启和关闭采集的运行</td>
+</tr>
+<tr>
+<td>输入 shape 与调用栈记录</td>
+<td>增加记录成本，可能改变张量引用生命周期</td>
+<td>先用低成本配置，定位后按需补充</td>
+</tr>
+<tr>
+<td>频繁同步</td>
+<td>打断原有计算和传输重叠</td>
+<td>区分微基准计时与完整系统分析</td>
+</tr>
+<tr>
+<td>缓冲区不足或事件丢失</td>
+<td>时间线出现缺口</td>
+<td>检查丢失统计和采集完整性</td>
+</tr>
+<tr>
+<td>根据文件顺序判断先后</td>
+<td>异步缓冲交付不等于执行顺序</td>
+<td>使用事件时间、标识和依赖重建关系</td>
+</tr>
+<tr>
+<td>跨时钟域直接相减</td>
+<td>制造虚假的间隔或顺序</td>
+<td>核对时钟来源、单位和校准方法</td>
+</tr>
+</tbody>
+</table>
+<p>PyTorch 文档特别指出，<code>record_shapes=True</code> 可能暂时保留张量引用，影响依赖引用计数的优化。<a href="https://docs.pytorch.org/docs/2.9/profiler.html">PyTorch Profiler 开销说明</a></p>
+<p>会议给出过类似 0.01 的采样比例。由于未说明具体接口，这里只将其理解为降低观测频率的例子，不当作所有工具通用的配置项。随机稀疏采样也可能漏掉罕见故障；诊断分布式依赖时，应考虑保留连续、对齐的事件窗口。</p>
+<h2 id="section-17">6. 四种工具怎样配合，以及结果怎样读</h2>
+<table>
+<thead>
+<tr>
+<th>工具</th>
+<th>主要视角</th>
+<th>优先回答的问题</th>
+<th>典型产物</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Nsight Systems</td>
+<td>CPU、CUDA API、GPU 与 NVTX 的系统时间线</td>
+<td>谁在提交？谁在等待？计算和传输是否重叠？</td>
+<td><code>.nsys-rep</code>、stats、可导出的 SQLite</td>
+</tr>
+<tr>
+<td>PyTorch Profiler</td>
+<td>框架算子、用户区间与设备活动</td>
+<td>哪个阶段慢？调用多少次？输入多大？</td>
+<td>算子表、Chrome JSON Trace</td>
+</tr>
+<tr>
+<td>Nsight Compute</td>
+<td>指定 kernel 的硬件指标</td>
+<td>任务是否太小？计算、访存和并行资源怎样使用？</td>
+<td>kernel 报告、指标 CSV</td>
+</tr>
+<tr>
+<td>Perfetto</td>
+<td>已采集事件的时间线与查询</td>
+<td>阶段、算子和设备活动怎样对应？</td>
+<td>可交互时间线、SQL 查询结果</td>
+</tr>
+</tbody>
+</table>
+<p>PPT 第 3–9 页把这四个观察层次连在一起：先确定阶段，再检查算子和启动关系，最后深入选定的 kernel。Perfetto 读取采集结果；打开一个文件不会重新测量模型。<a href="https://docs.nvidia.com/nsight-systems/UserGuide/index.html">Nsight Systems 指南</a>、<a href="https://perfetto.dev/docs/getting-started/other-formats">Perfetto 外部格式</a></p>
+<h3 id="section-18">6.1 算子表：Self、Total、次数和形状一起读</h3>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>应如何理解</th>
+<th>常见误读</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Self CPU</td>
+<td>事件自身的 CPU 时间，按工具规则排除子调用</td>
+<td>当作对应 GPU 的执行时间</td>
+</tr>
+<tr>
+<td>CPU total</td>
+<td>包含子调用的 CPU 时间</td>
+<td>再与所有子行相加，重复计数</td>
+</tr>
+<tr>
+<td>Self CUDA / CUDA total</td>
+<td>按关联与层级规则归属的设备时间</td>
+<td>当作某阶段的墙钟时间或全卡独占时间</td>
+</tr>
+<tr>
+<td><code># of Calls</code></td>
+<td>采集窗口内该组事件的调用次数</td>
+<td>忽略实际记录了几步</td>
+</tr>
+<tr>
+<td>Input Shapes</td>
+<td>该组算子的输入维度</td>
+<td>只看算子名称，忽略输入规模变化</td>
+</tr>
+</tbody>
+</table>
+<p>阅读时先确认 active 窗口，随后找到热点，再用次数和形状解释它。一次只需几微秒的操作，若由 Python 循环反复提交，也可能形成明显的主机开销。相同的 <code>aten::mm</code> 则可能分别处理 prefill 的完整序列和 decode 的单 token。</p>
+<p><code>key_averages(group_by_input_shape=True)</code> 可以按输入形状拆分统计，前提是采集时开启 <code>record_shapes=True</code>。父阶段和子算子的 total 可能重叠，多个 stream 的 GPU 活动也可能并行，因此这些数字不能直接相加成端到端耗时。（PPT 第 6–7 页；说明书第 3 节）</p>
+<p>还要区分 <strong>Trace 中的持续时间 <code>dur</code> 与 Self 时间</strong>：一个父区间的 <code>dur</code> 包含嵌套区间。按名字累计 <code>dur</code>，得到的是该类事件的累计区间时长；计算 self time 需要处理子区间覆盖。同样，标准火焰图的横向位置不表示执行先后，父框通常汇总自身及后代栈的权重。<a href="https://perfetto.dev/docs/analysis/sql-tables#slice">Perfetto slice 定义</a>、<a href="https://www.brendangregg.com/flamegraphs.html">Flame Graphs 官方说明</a></p>
+<h3 id="section-19">6.2 时间线：先找阶段，再看实际设备活动</h3>
+<p><img src="media/assets/AI%E6%80%A7%E8%83%BD%E5%88%86%E6%9E%90%E4%B8%8E%E6%8F%92%E8%A3%85/perfetto-decode.png" alt="PPT 中的四步 decode Perfetto 时间线"></p>
+<p>图来自 PPT 第 8 页。上方可以沿 <code>decode</code>、<code>attention</code> 和框架算子展开，设备轨道展示对应的 GPU 活动。图中颜色用于区分事件；一条很长的阶段范围并不表示某个 kernel 在整个区间持续计算。</p>
+<p>阅读顺序可以是：选定一步 decode，找到 attention，检查 CPU 的算子与启动调用，然后查看 GPU kernel 之间的间隔。如果导出文件提供关联 ID 或 flow，可以回查具体启动来源。关联标识需要结合进程和设备作用域解释，跨文件合并后不能只凭同一个数字匹配。</p>
+<p>Nsight Systems 的 stats 则提供另一种汇总视图：<code>Num Calls</code> 反映次数，<code>Total Time</code> 反映该类记录的累计时长，<code>Median / Min / Max</code> 帮助识别通常情况和少数慢调用。表中百分比只描述该表的分布，不能直接当作完整程序的时间占比。（PPT 第 5、8 页）</p>
+<h3 id="section-20">6.3 硬件指标：先看任务规模，再解释吞吐</h3>
+<p>PPT 第 9 页强调了三个方面：</p>
+<ul>
+<li><strong>Grid / Waves Per SM</strong>：一次启动提供多少线程块，相对于设备的并发执行容量是否足够。</li>
+<li><strong>SM / DRAM Throughput</strong>：对应计算或访存子系统的吞吐比例。</li>
+<li><strong>Occupancy 与资源限制</strong>：活跃 warp 比例，以及寄存器、shared memory 等资源对并行度的约束。</li>
+</ul>
+<p>如果 grid 很小，SM 和 DRAM 的吞吐都可能很低。这个组合首先提示任务不足以充分使用硬件，不能只凭“SM 吞吐低”就判定为访存瓶颈。即使任务规模足够，还需检查具体资源、访问模式与停顿原因。</p>
+<p>Nsight Compute 为收集指标可能重放 kernel 或应用，影响缓存、并发和主机运行时间。它适合解释 kernel 内部行为，最终性能收益需要关闭这些采集后另测。<a href="https://docs.nvidia.com/nsight-compute/ProfilingGuide/index.html">Nsight Compute Profiling Guide</a></p>
+<h2 id="section-21">7. Attention 案例：怎样从记录推导出 5.9 倍加速</h2>
+<p>这个案例的价值在于，几种工具分别提供了能够互相印证的证据。PPT 第 16–21 页报告了一段有意保留低效写法的 Naive 实现，以及 SDPA 与 KV Cache 的组合改写。</p>
+<h3 id="section-22">7.1 实验对象与测量范围</h3>
+<table>
+<thead>
+<tr>
+<th>项目</th>
+<th>PPT 记录的配置</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>硬件与环境</td>
+<td>RTX 5060 Laptop GPU，WSL / CUDA</td>
+</tr>
+<tr>
+<td>模型</td>
+<td>两层 TinyDecoder，每层包含 Attention、残差与 MLP</td>
+</tr>
+<tr>
+<td>hidden size / MLP 宽度</td>
+<td>256 / 512</td>
+</tr>
+<tr>
+<td>Attention heads</td>
+<td>8，每个 head 维度为 32</td>
+</tr>
+<tr>
+<td>batch / dtype</td>
+<td>1 / BF16</td>
+</tr>
+<tr>
+<td>输入流程</td>
+<td>随机张量模拟 128 token prefill，之后进行 4 步增量 decode</td>
+</tr>
+<tr>
+<td>decode 历史长度</td>
+<td>129、130、131、132</td>
+</tr>
+<tr>
+<td>对比区间</td>
+<td>prefill 之后，整个两层 TinyDecoder 的四步 decode</td>
+</tr>
+</tbody>
+</table>
+<p>第 16 页备注记录的版本为 PyTorch <code>2.12.0.dev20260407+cu128</code>、Nsight Systems <code>2026.3.2</code>、Nsight Compute <code>2026.3.1</code>。这些是报告所用环境，不代表本文运行环境或通用版本要求。</p>
+<p>这里的 prefill 一次处理完整前缀，decode 随后逐次处理新增位置。单个 head 的 Attention 可写为：</p>
+<p>$
+\operatorname{Attention}(Q,K,V)
+=\operatorname{softmax}\left(\frac{QK^\top}{\sqrt{d_h}}+M\right)V,
+\qquad d_h=32,
+$</p>
+<p>其中 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>M</mi></mrow><annotation encoding="application/x-tex">M</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord mathnormal" style="margin-right:0.109em;">M</span></span></span></span></eq> 控制哪些位置可被访问。Naive 与缓存实现的区别，既涉及执行这些运算的方式，也涉及每步需要重新计算哪些位置。</p>
+<p>该任务用小型解码块解释性能机制，未报告完整语言模型的文本生成质量，也不等于集群训练基准。</p>
+<h3 id="section-23">7.2 Profiler：调用次数暴露逐 head 循环</h3>
+<p>报告中，四步 decode 的 attention 阶段出现 8 次：</p>
+<p>$
+4\ \text{步}\times2\ \text{层}=8.
+$</p>
+<p><code>aten::bmm</code> 却出现了 128 次。每个 head 分别计算一次 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>Q</mi><msup><mi>K</mi><mi mathvariant="normal">⊤</mi></msup></mrow><annotation encoding="application/x-tex">QK^\top</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:1.0435em;vertical-align:-0.1944em;"></span><span class="mord mathnormal">Q</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0715em;">K</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8491em;"><span style="top:-3.063em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">⊤</span></span></span></span></span></span></span></span></span></span></span></eq> 和一次 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>P</mi><mi>V</mi></mrow><annotation encoding="application/x-tex">PV</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord mathnormal" style="margin-right:0.1389em;">P</span><span class="mord mathnormal" style="margin-right:0.2222em;">V</span></span></span></span></eq>，刚好有：</p>
+<p>$
+4\ \text{步}\times2\ \text{层}\times8\ \text{head}\times2\ \text{矩阵乘}=128.
+$</p>
+<p>这把算子表中的次数对应到了上层代码结构：同一次 Attention 被拆成多个 head，再逐个提交小矩阵乘。（PPT 第 17 页）</p>
+<h3 id="section-24">7.3 输入形状暴露完整历史重算</h3>
+<p>首步 Naive 的 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>Q</mi><msup><mi>K</mi><mi mathvariant="normal">⊤</mi></msup></mrow><annotation encoding="application/x-tex">QK^\top</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:1.0435em;vertical-align:-0.1944em;"></span><span class="mord mathnormal">Q</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0715em;">K</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8491em;"><span style="top:-3.063em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">⊤</span></span></span></span></span></span></span></span></span></span></span></eq> 输入是：</p>
+<p>$
+[1,129,32]\times[1,32,129],
+$</p>
+<p>每个 head 形成 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>129</mn><mo>×</mo><mn>129</mn></mrow><annotation encoding="application/x-tex">129\times129</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.7278em;vertical-align:-0.0833em;"></span><span class="mord">129</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">×</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.6444em;"></span><span class="mord">129</span></span></span></span></eq> 的分数矩阵。这个形状表明，增加一个 token 后，模型仍在计算所有历史位置的 query 和输出。</p>
+<p>对于只需要最后一个位置结果、且历史状态可合法复用的因果解码，可以保存各层历史 K/V，只对新 token 做增量计算。首步的 Attention 分数规模就从每个 head 的 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>129</mn><mo>×</mo><mn>129</mn></mrow><annotation encoding="application/x-tex">129\times129</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.7278em;vertical-align:-0.0833em;"></span><span class="mord">129</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">×</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.6444em;"></span><span class="mord">129</span></span></span></span></eq> 变成 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>1</mn><mo>×</mo><mn>129</mn></mrow><annotation encoding="application/x-tex">1\times129</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.7278em;vertical-align:-0.0833em;"></span><span class="mord">1</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">×</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.6444em;"></span><span class="mord">129</span></span></span></span></eq>。</p>
+<p>这一比较解释的是工作量变化，不等于整个程序会按 129 倍加速。QKV 投影、MLP、缓存更新、kernel 启动和其他开销仍然存在。</p>
+<h3 id="section-25">7.4 Systems：逐 head 同步打断任务提交</h3>
+<p>PPT 第 18 页报告的四步采集窗口包含：</p>
+<table>
+<thead>
+<tr>
+<th>记录</th>
+<th style="text-align:right">Naive 次数</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GPU kernel</td>
+<td style="text-align:right">468</td>
+</tr>
+<tr>
+<td><code>cudaLaunchKernel</code> / <code>cuLaunchKernel</code></td>
+<td style="text-align:right">308 / 160</td>
+</tr>
+<tr>
+<td><code>cudaDeviceSynchronize</code></td>
+<td style="text-align:right">64</td>
+</tr>
+</tbody>
+</table>
+<p>其中 64 次同步对应：</p>
+<p>$
+4\ \text{步}\times2\ \text{层}\times8\ \text{head}=64.
+$</p>
+<p>在这个实现里，每处理一个 head，CPU 都显式等待设备完成，再继续提交后续工作。大量小 kernel 与频繁等待结合起来，使主机提交和同步成为优先检查的开销。</p>
+<p>这一判断需要同时看代码顺序与时间线。launch 次数、kernel 次数和同步次数各自描述一类事件，不能在其他程序里默认相等，或只用次数推算精确时间占比。</p>
+<h3 id="section-26">7.5 Compute：一次 kernel 的任务量很小</h3>
+<p>PPT 第 19 页给出两个被选中的 Naive kernel：</p>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th style="text-align:right">bmm</th>
+<th style="text-align:right">softmax</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Compute (SM) Throughput</td>
+<td style="text-align:right">4.24%</td>
+<td style="text-align:right">5.97%</td>
+</tr>
+<tr>
+<td>DRAM Throughput</td>
+<td style="text-align:right">2.76%</td>
+<td style="text-align:right">2.93%</td>
+</tr>
+<tr>
+<td>Waves Per SM</td>
+<td style="text-align:right">0.04</td>
+<td style="text-align:right">0.11</td>
+</tr>
+</tbody>
+</table>
+<p>这两个 kernel 的计算与显存吞吐都较低，任务网格也不足以形成一个完整 wave。结合前面的 128 次 bmm、64 次同步和历史重算，合理的优化方向是减少重复工作、合并小任务并去掉逐 head 等待。</p>
+<p>这些数据说明选中调用的执行情况，尚不足以量化三种问题各自占用了多少总时间。Compute 采集本身包含 replay，也不能拿其中的 Duration 替代独立的四步 decode 基准。</p>
+<h3 id="section-27">7.6 改写：多 head 一起计算，历史 K/V 按层缓存</h3>
+<p>PPT 第 20 页的改写同时做了三件事：</p>
+<ol>
+<li>用 <code>F.scaled_dot_product_attention</code> 处理全部 head，去掉逐 head 的 Python 调用循环。</li>
+<li>移除循环内显式同步，让 CPU 可以继续提交工作。</li>
+<li>prefill 后保存每层 K/V，decode 只输入当前新 token，并将新 K/V 追加到对应层缓存。</li>
+</ol>
+<p>首步 decode 的主要张量为：</p>
+<table>
+<thead>
+<tr>
+<th>张量</th>
+<th>形状</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>当前 token 输入</td>
+<td><code>[1, 1, 256]</code></td>
+</tr>
+<tr>
+<td>Q</td>
+<td><code>[1, 8, 1, 32]</code></td>
+</tr>
+<tr>
+<td>追加后的 K / V</td>
+<td><code>[1, 8, 129, 32]</code></td>
+</tr>
+</tbody>
+</table>
+<p>SDPA 是调用接口，具体后端由输入和运行配置决定。PPT 报告本轮实际执行了 Flash Attention kernel，因此可以说明这次进入了对应路径，不能把所有 SDPA 调用都默认等同于 Flash Attention。</p>
+<p>这里的 mask 也值得注意：第 20 页备注说明，单 token query 已位于序列末尾，缓存仅包含合法的历史位置与当前位置，因此该 decode 步使用 <code>is_causal=False</code>。在这一前提下，当前 query 应能访问缓存中全部 K/V。</p>
+<p>如果 query 一次包含多个新 token，或 cache 中含 padding、未写入位置，就需要相应的 mask。PyTorch 文档中的非方形 <code>is_causal=True</code> 使用左上对齐的因果约束，不能无条件套到带历史缓存的单 token 解码上。推理时还需把 SDPA 的 <code>dropout_p</code> 设为 0。<a href="https://docs.pytorch.org/docs/2.9/generated/torch.nn.functional.scaled_dot_product_attention.html">SDPA API 与 mask 语义</a></p>
+<h3 id="section-28">7.7 独立基准与数值检查</h3>
+<p>PPT 第 21 页报告：关闭所有 Profiler，预热 3 轮，交替顺序重复测量 12 次，以四步 decode 的墙钟中位数比较。</p>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th style="text-align:right">Naive</th>
+<th style="text-align:right">SDPA + KV Cache 组合改写</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>四步模型 decode 墙钟中位数</td>
+<td style="text-align:right">18.206ms</td>
+<td style="text-align:right">3.099ms</td>
+</tr>
+<tr>
+<td>Systems 窗口中的 GPU kernel 数</td>
+<td style="text-align:right">468</td>
+<td style="text-align:right">96</td>
+</tr>
+<tr>
+<td>Systems 窗口中的设备同步数</td>
+<td style="text-align:right">64</td>
+<td style="text-align:right">0</td>
+</tr>
+<tr>
+<td>Flash Attention kernel 数</td>
+<td style="text-align:right">0</td>
+<td style="text-align:right">8</td>
+</tr>
+</tbody>
+</table>
+<p>据报告数值计算：</p>
+<p>$
+S=\frac{18.206}{3.099}\approx5.875.
+$</p>
+<p>所以“约 5.9 倍”成立，对应的耗时下降约为 83.0%。这里的墙钟测量与 Systems 计数来自不同采集运行；表格用于对应实现变化，不能把它们当成同一次测量。</p>
+<p>8 个 Flash Attention kernel 对应四步、每步两层。设备同步数降为 0，指报告采集窗口中的该类显式同步记录，不代表程序没有依赖等待，也不代表基准计时不需要确认设备完成。</p>
+<p>数值检查使用同权重、同输入，比较每一步最后一个 token 的输出，报告最大绝对差为 <strong>0.015625</strong>。这支持对这些已比较输出描述数值接近程度；是否满足应用要求，还要看预设容差、输出尺度和任务指标。材料没有提供逐位一致或完整模型质量验证。</p>
+<p>因此，这一结果的准确表述是：<strong>在该小模型、batch 1、BF16 和四步 decode 设置下，SDPA、去同步与 KV Cache 的组合改写，相对刻意低效的 Naive 基线获得约 5.9 倍加速。</strong> 单项贡献需要消融实验。</p>
+<h3 id="section-29">7.8 如何把案例的方法迁移到自己的程序</h3>
+<p>可先逐项增加改动：去掉无必要的逐 head 同步，合并多 head 计算，再加入合法的缓存复用；每一步都保留独立计时和数值检查。这个顺序是建议的后续实验，不是 PPT 已报告的消融结果。</p>
+<p>对更大的系统，还应考虑被优化部分的占比。若它占总时间 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>p</mi></mrow><annotation encoding="application/x-tex">p</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.625em;vertical-align:-0.1944em;"></span><span class="mord mathnormal">p</span></span></span></span></eq>，加速 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>s</mi></mrow><annotation encoding="application/x-tex">s</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.4306em;"></span><span class="mord mathnormal">s</span></span></span></span></eq> 倍，其余开销不变，则：</p>
+<p>$
+S_{\mathrm{total}}=\frac{1}{(1-p)+p/s}.
+$</p>
+<p>例如某部分只占完整流程的 20%，该部分快 5.9 倍，完整流程约快 1.20 倍。PPT 的 5.9 倍已经覆盖这个 TinyDecoder 的四步 decode，但不能继续外推成整个服务、训练或机器人闭环也快 5.9 倍。</p>
+<h2 id="section-30">8. 多进程 Trace：从“某张卡在等”找到“谁让它等”</h2>
+<p>单个进程里的一段 GPU 空闲，只能直接说明这个区间没有观察到相应执行活动。原因可能是本地供给不足，也可能是等待远端数据。</p>
+<p>例如流水线并行中：</p>
+<pre><code class="language-text">Rank 0： [计算 microbatch 0] ─── Send ─── [计算 microbatch 1]
+Rank 1：       等待输入 ─────── [计算 microbatch 0] ─── Send
+Rank 2：                等待输入 ─────────────────── [计算]
+</code></pre>
+<p>若只看 Rank 2，它可能空闲很久；根因可能在 Rank 0 的计算、Rank 0 到 Rank 1 的通信，或者更早的数据准备过程。</p>
+<p>会议描述了一个 <strong>1024 张国产加速卡</strong>的训练案例：把多个进程的 Trace 后处理后导入 Perfetto，从全局视角分析流水线等待，并定位到光模块相关故障。这里保留为<strong>会议报告的排障案例</strong>；未提供原始 Trace、链路计数器或维修验证记录。</p>
+<h3 id="section-31">8.1 合并前要解决四件事</h3>
+<ol>
+<li><strong>身份唯一</strong>：保留 host、rank、device、process、thread、stream 等层级。不同机器的同一 PID 不能当作同一进程。</li>
+<li><strong>时间可比</strong>：确认时间单位、原点与跨主机校准。不能把各文件独立减去各自首事件时间后，就认为完成了对齐。</li>
+<li><strong>依赖可追踪</strong>：保留 step、microbatch、collective 序号、communicator、peer 和可用关联标识；具体字段取决于采集后端。</li>
+<li><strong>采集范围明确</strong>：记录每个 rank 的采集窗口、是否缺失以及是否丢事件。未采集的区间应保留为未知。</li>
+</ol>
+<p>跨主机对齐可抽象为：</p>
+<p>$
+t_{\mathrm{global}}\approx a_h t_{\mathrm{local}}+b_h,
+$</p>
+<p>其中 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>b</mi><mi>h</mi></msub></mrow><annotation encoding="application/x-tex">b_h</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8444em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal">b</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">h</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span></eq> 表示时钟偏移，<eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>a</mi><mi>h</mi></msub></mrow><annotation encoding="application/x-tex">a_h</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.5806em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal">a</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">h</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span></eq> 表示漂移校正。实际应记录校准依据和残余误差；当误差大于事件间隔时，不应强行判断两者的精确先后。</p>
+<h3 id="section-32">8.2 长通信事件不一定意味着链路带宽低</h3>
+<p>某个 collective 持续很久，可能是传输较慢，也可能是其他 rank 很晚才到达。后一种情况中，本地通信事件包含等待远端参与者的时间。</p>
+<p>因此，诊断应对比各 rank 的到达时刻、通信前的计算、传输规模和链路状态。要确认光模块故障，还应结合重传、错误计数、硬件状态或更换后的复测。</p>
+<p>全局 Trace 的价值，是帮助缩小根因范围并追踪等待传播；最终根因仍需要相应层面的证据支持。</p>
+<h2 id="section-33">9. Trace 压缩课题：从 500GB 到 5GB 是什么要求</h2>
+<p>会议提出在现有工具上增加流处理和压缩，将千卡场景约 500GB 的 Trace 缩到约 5GB。</p>
+<p>按同一容量单位计算，这相当于 <strong>100:1 压缩比，体积减少约 99%</strong>。这是会议提出的目标，现有材料没有给出已完成实现或达到该比例的实验。</p>
+<h3 id="section-34">9.1 先说明“压缩”保留什么</h3>
+<table>
+<thead>
+<tr>
+<th>方案</th>
+<th>保留能力</th>
+<th>必须说明的代价</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>通用无损压缩</td>
+<td>可恢复原始字节</td>
+<td>解压成本，随机访问是否方便</td>
+</tr>
+<tr>
+<td>结构化编码</td>
+<td>可设计为恢复选定 schema 内全部事件语义</td>
+<td>JSON 格式细节或未知字段是否仍保留</td>
+</tr>
+<tr>
+<td>重复模式编码</td>
+<td>用模板与实例参数表示重复结构</td>
+<td>是否保存每次执行的真实时间和异常偏差</td>
+</tr>
+<tr>
+<td>聚合与采样</td>
+<td>保留统计或部分事件</td>
+<td>个别事件与完整依赖可能无法恢复</td>
+</tr>
+<tr>
+<td>多级摘要</td>
+<td>先看全局，再读取局部详细数据</td>
+<td>摘要不代表底层信息一定可以丢弃</td>
+</tr>
+</tbody>
+</table>
+<p><strong>文件更小和诊断能力不变，是需要分别验证的两个结果。</strong> 训练 step 结构虽然重复，真正需要诊断的往往就是其中一次异常。用平均 step 替代全部 step，可能把问题一并删掉。</p>
+<h3 id="section-35">9.2 一个可验证的工具方案</h3>
+<p>以下是基于会议问题提出的设计建议，并非会议已实现的系统：</p>
+<pre><code class="language-text">各 rank 的事件流
+        ↓
+统一字段、身份与时间域
+        ↓
+字典编码 / 时间增量 / 分块无损压缩
+        ↓
+按 step、rank、时间建立索引
+        ↓
+全局摘要 + 保留原始异常窗口
+        ↓
+查询候选等待关系，按需载入局部完整事件
+</code></pre>
+<p>可先从低风险的数据冗余入手：把重复名称与调用栈改为引用，对有序时间使用增量表示，按连续时间窗口分块。未知字段和原始身份映射需要保留，避免转换后无法回查。</p>
+<p>进一步可以研究重复 step 的结构模板，但每次执行的持续时间、缺失事件、通信序号和异常残差应单独表达。存储结构重复，与抹平运行差异，是两种不同处理。</p>
+<p>“流处理”也需要说明位置：若先写出 500GB，再离线压缩为 5GB，只改善后续存储和传输；若目标包含减少首次落盘 IO，就需要在采集或写入阶段处理，并测量额外 CPU 和训练扰动。</p>
+<h3 id="section-36">9.3 现有能力与研究增量</h3>
+<p>Perfetto 已支持包括动态字符串 interning、flow 关联在内的机制，原生格式也有压缩能力。对巨大 Trace，可使用本地原生 Trace Processor 缓解浏览器运行时的内存限制。<a href="https://perfetto.dev/docs/">Perfetto 能力说明</a>、<a href="https://perfetto.dev/docs/concepts/config">Trace 配置与压缩</a>、<a href="https://perfetto.dev/docs/visualization/large-traces">大 Trace 分析</a></p>
+<p>因此，“换一种格式加压缩算法”首先是工程方案。若希望形成研究工作，需要证明额外解决了什么问题，例如：</p>
+<ul>
+<li>在大量重复执行结构中，保留异常时间与跨 rank 依赖，同时降低存储和查询成本；</li>
+<li>在有限观测预算下，选择哪些 rank 和连续窗口能更好地定位异常；</li>
+<li>数据不完整、时钟有误差时，仍能给出有依据的等待关系与不确定性。</li>
+</ul>
+<p>这些方向的创新性需要进一步检索相关工作，不能仅凭本次会议判断。</p>
+<h3 id="section-37">9.4 怎样验证这个方向成立</h3>
+<table>
+<thead>
+<tr>
+<th>验证维度</th>
+<th>建议测量</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>数据口径</td>
+<td>设备数、rank 数、采集时长、事件数、字段和原始格式</td>
+</tr>
+<tr>
+<td>存储与开销</td>
+<td>压缩比、处理速度、峰值内存、首次落盘字节数、训练扰动</td>
+</tr>
+<tr>
+<td>恢复正确性</td>
+<td>声明保留的事件、时间、身份和关联关系是否能恢复</td>
+</tr>
+<tr>
+<td>查询性能</td>
+<td>首次打开、step 检索、跨 rank 对比、异常窗口读取耗时</td>
+</tr>
+<tr>
+<td>诊断效果</td>
+<td>能否定位相同异常，是否漏掉慢 rank 或错误链路</td>
+</tr>
+<tr>
+<td>对照方案</td>
+<td>原始 JSON、通用压缩、已有 Trace 表示、相同存储预算下的采样</td>
+</tr>
+</tbody>
+</table>
+<p>先在单机多卡和小规模跨机数据上比较完整事件与转换结果，再扩大规模。若使用有损摘要，需要另外报告遗漏率和诊断质量；不能沿用无损恢复的结论。</p>
+<h2 id="section-38">10. 实际调用：从环境确认到读回结果</h2>
+<p>本节根据调用说明书与 PPT 第 14–15 页整理。通用代码展示接入方式；<code>run_paired_*.py</code> 属于报告作者的项目，目前附件没有这些脚本。取得对应工程后才能直接运行案例命令。</p>
+<h3 id="section-39">10.1 先确认采集环境</h3>
+<p>在实际运行模型的 GPU 环境中检查：</p>
+<pre><code class="language-bash">python -c &quot;import torch; print(torch.__version__); print(torch.cuda.is_available()); print(torch.profiler.supported_activities())&quot;
+nsys --version
+ncu --version
+nvidia-smi
+</code></pre>
+<p><code>torch.cuda.is_available()</code>、Profiler 支持的 activities 和 Nsight 是否可用，回答不同问题。如果只有 CPU activity，应继续检查 PyTorch 构建、驱动、CUPTI 与采集支持，不能只凭一项检查认定根因。</p>
+<p>说明书记录了两组环境：</p>
+<table>
+<thead>
+<tr>
+<th>环境</th>
+<th>材料中的用途与结果</th>
+<th>可以得出的结论</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Windows、PyTorch <code>2.14.0+cpu</code></td>
+<td>小模型 CPU 示例生成算子表、89,676 字节 Trace 和火焰图；未发现 <code>nsys</code>、<code>ncu</code></td>
+<td>CPU 接口与文件链路在该环境跑通</td>
+</tr>
+<tr>
+<td>WSL / CUDA、RTX 5060 Laptop GPU</td>
+<td>PPT 中的 Naive/SDPA 四步 decode 实验</td>
+<td>按报告配置解释 GPU 指标与基准</td>
+</tr>
+</tbody>
+</table>
+<p>第一组示例是 batch 2、序列 32、宽度 64；它与第 7 节的 batch 1、hidden size 256 案例不同。未发现 Nsight 表示该环境没有相应 GPU 采集结果，不是 GPU 利用率为 0。</p>
+<h3 id="section-40">10.2 阶段标记与采集窗口分别控制</h3>
+<p>在 PyTorch Profiler 中，可用自定义区间标记模型阶段：</p>
+<pre><code class="language-python">from torch.profiler import record_function
+
+with record_function(&quot;decode&quot;):
+    output = model(tokens)
+</code></pre>
+<p>在独立的 Nsight 采集运行中，可以显式添加同名 NVTX 区间：</p>
+<pre><code class="language-python">import torch
+
+with torch.cuda.nvtx.range(&quot;decode&quot;):
+    output = model(tokens)
+</code></pre>
+<p><code>record_function</code> 与 NVTX range 负责命名区间。<code>profile(...)</code>、<code>nsys profile</code> 等工具负责采集。说明书中的 <code>emit_nvtx()</code> 还能为 autograd 操作生成 NVTX 标记，但自定义的同名阶段最好显式标注，避免假定不同接口自动产生相同结构。<a href="https://docs.pytorch.org/docs/2.9/generated/torch.cuda.nvtx.range.html">NVTX range API</a></p>
+<p><code>model.eval()</code> 设置模块的评估行为，<code>torch.inference_mode()</code> 或 <code>no_grad()</code> 控制梯度记录。两者的作用不同，推理测试应按模型需要共同设置。</p>
+<h3 id="section-41">10.3 PyTorch Profiler：只记录需要分析的几步</h3>
+<p>下面是接入已有 <code>model</code> 和 <code>tokens</code> 的 CUDA 示例，不是完整模型实现：</p>
+<pre><code class="language-python">from pathlib import Path
+import os
+import torch
+from torch.profiler import ProfilerActivity, profile, record_function, schedule
+
+out_dir = Path(&quot;traces&quot;)
+out_dir.mkdir(exist_ok=True)
+rank = os.environ.get(&quot;RANK&quot;, &quot;0&quot;)
+model.eval()
+
+def save_trace(prof):
+    print(prof.key_averages(group_by_input_shape=True).table(
+        sort_by=&quot;self_cuda_time_total&quot;, row_limit=20
+    ))
+    prof.export_chrome_trace(
+        str(out_dir / f&quot;rank{rank}_step{prof.step_num}.json&quot;)
+    )
+
+with torch.inference_mode():
+    with profile(
+        activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+        schedule=schedule(skip_first=10, wait=1, warmup=1, active=2, repeat=1),
+        on_trace_ready=save_trace,
+        record_shapes=True,
+        with_stack=False,
+        profile_memory=False,
+    ) as prof:
+        for _ in range(14):
+            with record_function(&quot;decode&quot;):
+                output = model(tokens)
+            prof.step()
+</code></pre>
+<p>这里先跳过 10 步，再等待 1 步、Profiler 预热 1 步、正式记录 2 步，共需 14 次 <code>prof.step()</code>。跳过 10 步只是例子；编译或模型预热是否结束，必须看真实程序。实际自回归解码还应在循环中更新输入和缓存。</p>
+<p><code>prof.step()</code> 推进采集 schedule。多个周期的 Trace 应在 <code>on_trace_ready</code> 中分别导出，文件名加入 rank 和周期信息；若需要跨多次运行保留记录，再增加运行 ID。只在退出上下文后导出，可能只拿到最后一个周期。<a href="https://docs.pytorch.org/docs/2.9/profiler.html">PyTorch Profiler API</a></p>
+<p>需要查源码时，再单独开启 <code>with_stack=True</code> 并按调用栈分组。调用栈和 shape 会增加开销，最终对外报告的吞吐要回到关闭详细采集的运行中测量。</p>
+<p>PPT 所用工程还提供了现成入口：</p>
+<pre><code class="language-bash"># 在作者的 scenarios/naive_attention 目录中执行。
+python run_paired_torch_profiler.py --variant naive
+python run_paired_torch_profiler.py --variant sdpa
+</code></pre>
+<p>PPT 记录的输出目录为 <code>outputs/paired_2026-10-08/</code>。其中 <code>*_torch_table.txt</code> 是算子表，<code>*_torch_trace.json</code> 是可视化数据。这是报告工程中的相对路径，不是本文工作区已生成的结果。</p>
+<h3 id="section-42">10.4 Nsight Systems：把窗口限定到稳态 decode</h3>
+<p>PPT 的 <code>run_paired_gpu.py</code> 已用 <code>cudaProfilerStart/Stop</code> 包围预热和 prefill 之后的四步 decode，因此可使用：</p>
+<pre><code class="language-bash">nsys profile --trace=cuda,nvtx \
+  --capture-range=cudaProfilerApi --capture-range-end=stop \
+  --sample=none --cpuctxsw=none -o naive_nsys \
+  python run_paired_gpu.py --variant naive
+</code></pre>
+<p>如果换成自己的脚本，必须同时实现对应的 start/stop；单独复制 <code>--capture-range=cudaProfilerApi</code> 不会自动找到模型的稳态区间。只想对短程序做初步检查时，可使用普通采集并限制时长。<a href="https://docs.nvidia.com/nsight-systems/UserGuide/index.html#focused-profiling">Nsight Systems 采集区间</a></p>
+<p>报告生成后，可在不重跑模型的情况下读取汇总或导出数据库：</p>
+<pre><code class="language-bash">nsys stats --report cuda_gpu_kern_sum naive_nsys.nsys-rep
+nsys export --type=sqlite --output=naive_nsys.sqlite naive_nsys.nsys-rep
+sqlite3 naive_nsys.sqlite '.schema'
+</code></pre>
+<p>在集群上优先把报告和 SQLite 写到节点本地目录，再复制回共享存储。说明书记录过共享文件系统上的 SQLite 锁问题；具体表名、权限和可用指标以实际版本为准。每个 rank 使用独立输出文件，避免覆盖。</p>
+<h3 id="section-43">10.5 Nsight Compute：筛选一个明确的 kernel</h3>
+<p>先从 Systems 找到实际 kernel 名，再用 Compute 筛选。下面沿用 PPT 的 SDPA 场景入口：</p>
+<pre><code class="language-bash">ncu --profile-from-start off --kernel-name-base demangled \
+  --kernel-name 'regex:.*flash_fwd_kernel.*' --launch-count 1 \
+  --section SpeedOfLight --section Occupancy \
+  --section MemoryWorkloadAnalysis \
+  --export sdpa_flash \
+  python run_paired_gpu.py --variant sdpa
+</code></pre>
+<p>这条命令依赖脚本中的 profiler start/stop。正则需加引号，防止 shell 先解释 <code>*</code>；<code>flash_fwd_kernel</code> 也只适用于实际匹配的后端，换版本或输入后应重新确认名称。<a href="https://docs.nvidia.com/nsight-compute/NsightComputeCli/index.html">Nsight Compute CLI</a></p>
+<p>PPT 与说明书记录该环境导出 <code>.ncu-repz</code>，其他版本可能使用 <code>.ncu-rep</code> 等扩展名。以后缀和报告日志为准，用兼容版本 GUI 打开。需要 Roofline 时，先通过 <code>ncu --list-sections</code> 确认并采集相应 section。</p>
+<p>同一实验优先分开运行 PyTorch Profiler、Nsight Systems 和 Nsight Compute，再单独跑无 Profiler 的基准。这样既减少采集器之间的相互影响，也容易区分每组数字的来源。CUPTI 对多订阅者的支持有版本条件；不应把说明书的环境经验写成所有版本永远无法共存。</p>
+<h3 id="section-44">10.6 Perfetto 与 SQL：让汇总保持正确含义</h3>
+<p>打开 <a href="https://ui.perfetto.dev">Perfetto UI</a>，导入 Chrome Trace，按阶段名、算子名或 kernel 名定位。也可以用已安装的 Trace Processor 汇总：</p>
+<pre><code class="language-bash">trace_processor query trace.json \
+  &quot;SELECT name, COUNT(*) AS n, SUM(dur)/1e6 AS summed_duration_ms
+   FROM slice WHERE dur &gt;= 0
+   GROUP BY name ORDER BY summed_duration_ms DESC LIMIT 20&quot;
+</code></pre>
+<p>这里使用 Trace Processor 的纳秒单位，所以除以 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msup><mn>10</mn><mn>6</mn></msup></mrow><annotation encoding="application/x-tex">10^6</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8141em;"></span><span class="mord">1</span><span class="mord"><span class="mord">0</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8141em;"><span style="top:-3.063em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">6</span></span></span></span></span></span></span></span></span></span></span></eq> 得到毫秒；Chrome JSON 原始 <code>dur</code> 使用微秒。命令语法以安装版本为准。</p>
+<p>这条查询用于初步查看事件名称与累计区间时长。父子区间会重叠，不同线程也可能并行，因此结果既不是 self time，也不是完整任务的墙钟占比。比较某一步时，应先按时间、track、rank 或阶段限制查询范围。原始 JSON 的简单统计还需限定事件类型，避免把内存计数器等非耗时事件纳入热点排行。<a href="https://perfetto.dev/docs/getting-started/other-formats">Perfetto Trace 格式</a></p>
+<h3 id="section-45">10.7 CUDA Event 与最终基准</h3>
+<p>同一 stream 上的明确设备区间可用 Event 计时。下面是独立示例：</p>
+<pre><code class="language-python">import torch
+
+x = torch.randn(1024, 1024, device=&quot;cuda&quot;)
+y = torch.randn(1024, 1024, device=&quot;cuda&quot;)
+for _ in range(10):
+    z = x @ y
+
+a = torch.cuda.Event(enable_timing=True)
+b = torch.cuda.Event(enable_timing=True)
+a.record()
+b.record()
+b.synchronize()
+
+a.record()
+for _ in range(100):
+    z = x @ y
+b.record()
+b.synchronize()
+print(f&quot;平均设备区间: {a.elapsed_time(b) / 100:.3f} ms&quot;)
+</code></pre>
+<p>这得到 stream 中经过的平均时间，可能包含提交空档与竞争。完整模型的墙钟基准则需要在明确边界确认设备完成，并固定模型状态、输入和缓存起点。对于 decode，先建立同样的 prefill cache，再测同样数量的新 token；每次试验应重新准备等价状态。</p>
+<p>本笔记的代码做了静态语法检查，未在本机完成 CUDA 实测。第 7 节的实验结果仍来自 PPT。</p>
+<h3 id="section-46">10.8 文件与版本问题怎样处理</h3>
+<p>说明书记录了中文路径导出失败、JSON 中反斜杠转义错误，以及火焰图导出链路的兼容性问题。这些经验适合保留为排查线索：</p>
+<ul>
+<li>导出失败时，可先尝试临时 ASCII 路径，核对文件是否存在且可解析，再复制到目标目录。</li>
+<li><code>use_python_export</code>、私有 <code>_ExperimentalConfig</code> 和显存历史接口依赖版本，使用前核对当前安装的函数签名。</li>
+<li>JSON 损坏时保留原文件，优先修复或更换导出路径；无差别替换反斜杠可能改变合法内容。</li>
+<li>火焰图无数据时，分别检查是否采集到调用栈、导出是否成功和输入格式。<code>export_stacks</code> 的维护状态与 FlameGraph 项目的维护状态应分别说明。</li>
+</ul>
+<p>例如，PyTorch 2.14 文档已经列出 <code>use_python_export</code> 参数，并将 <code>export_memory_timeline</code> 标为 deprecated；2.9 文档的对应接口不同。CUDA 显存分配分析可按所用版本选择 memory history/snapshot，不能把 CUDA 专用接口直接当作全部 CPU 内存分析的替代品。<a href="https://docs.pytorch.org/docs/2.14/profiler.html">PyTorch 2.14 Profiler</a>、<a href="https://docs.pytorch.org/docs/2.9/profiler.html">PyTorch 2.9 Profiler</a></p>
+<p>这些问题不会改变分析原则：先证明产物确实包含需要的事件，再解释数据；缺失的硬件指标写为“未采集”，不要补成零。</p>
+<h2 id="section-47">11. 与 RL、VLA 和仿真研究的联系</h2>
+<p>下面是结合已有研究主题的分析，不属于会议原始结论。</p>
+<h3 id="section-48">11.1 RL：先找完整迭代中谁占时间</h3>
+<p>一个 RL 流程可能包括 rollout、reward、logprob、训练更新、权重同步和环境交互。局部 kernel 优化的收益，取决于该部分在整个迭代中的占比与依赖位置。</p>
+<p>这与 <a href="RL-Kernel.html">RL-Kernel 笔记</a> 中区分算子窗口和完整 RL step 的思路一致。系统观测还应保留 policy version、批次和阶段标识，避免把不同时期的活动错误对应起来。</p>
+<h3 id="section-49">11.2 VLA：关注动作何时真正可执行</h3>
+<p>机器人控制链路可以包括相机采集、预处理、VLA 推理、动作排队和控制执行。只优化前向时间，可能无法改善被旧动作队列或执行端等待限制的闭环响应。</p>
+<p>因此，可以分别记录观察时间、动作生成时间和真实执行时间。这与 <a href="SmoothRL.html">SmoothRL 笔记</a> 中区分生成动作和实际执行区间有关。推理耗时、动作新鲜度和最终成功率需要分别测量。</p>
+<h3 id="section-50">11.3 仿真：先说明要模拟哪一层</h3>
+<p>会议讨论了仿真器对访存与通信行为研究的帮助，也表达了对大规模仿真实验成本的顾虑。</p>
+<p>这一问题应结合保真度和研究目标判断。体系结构仿真、集群调度模拟和机器人物理仿真，分别描述不同对象。已有 Trace 可以支持负载重放或性能建模，但模拟器要用于预测优化收益，仍需验证依赖、争用和通信模型是否足够准确。</p>
+<p>比较稳妥的研究流程是：用小规模实测校准模型，明确模型覆盖范围，再用模拟探索配置，并回到实机验证关键结论。</p>
+<h2 id="section-51">12. 下一步可以做什么</h2>
+<h3 id="section-52">12.1 把 Attention 案例复现成可比较的实验</h3>
+<p>PPT 已补齐硬件、模型、输入、计数、基准方法和末 token 误差。继续复现时，重点取得报告中引用的 <code>model.py</code>、<code>run_paired_gpu.py</code>、<code>run_paired_torch_profiler.py</code>、<code>benchmark.json</code>、<code>equivalence.json</code> 和对应的原始报告。</p>
+<p>优先补三组分析：逐项去同步、合并 head、增加 KV Cache 的消融；不同 batch 和上下文长度的扩展；数值误差相对预设容差与下游任务的检查。这些实验可以判断 5.9 倍收益来自哪些改动，以及适用范围怎样变化。</p>
+<h3 id="section-53">12.2 保留会议中的集群与工具课题</h3>
+<table>
+<thead>
+<tr>
+<th>工作</th>
+<th>材料中的安排</th>
+<th>目前资料支持到哪里</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>性能工具调用说明</td>
+<td>沈哲浩提供说明</td>
+<td>本次已获得说明书，可整理调用流程</td>
+</tr>
+<tr>
+<td>在各自科研课题中实践并分享</td>
+<td>团队成员</td>
+<td>可按第 10 节建立基准、采集和复测记录</td>
+</tr>
+<tr>
+<td>大规模 Trace 流处理与压缩</td>
+<td>金煜阳探索</td>
+<td>约 500GB → 5GB 仍是目标，未提供达成实验</td>
+</tr>
+</tbody>
+</table>
+<p>1024 卡光模块排障仍缺少原始 Trace、链路指标和故障修复后的复测。动态采集控制器、C10/Kineto 的具体热路径与冷路径，以及会议中 0.01 采样率的代码位置，也没有在这两份新附件中补齐。</p>
+<p>若从这些材料发展一个研究问题，值得聚焦的是：<strong>在有限观测预算下，怎样同时保留重复程序结构、真实时间变化和跨 rank 依赖，使大规模异常仍然可定位。</strong> Attention 案例说明了细粒度证据怎样支持优化；集群课题则要求这套分析在更多进程、更长运行时间和不完整观测下依然成立。</p>
+<h2 id="section-54">参考资料</h2>
+<p>正文开头列出本次两份附件；PPT 的案例引用按实际页序，说明书引用按章节。下列官方资料用于核对通用机制。基础资料于 2026-10-29 核对，本次于 2026-10-30 补查 SDPA、NVTX、采集参数及版本相关接口。</p>
+<ol>
+<li>用户提供的会议文字材料、21 页 PPT 和《02-调用说明书.md》：分别提供背景讨论、案例数据与调用流程。</li>
+<li><a href="https://arxiv.org/html/2204.02311v5">PaLM: Scaling Language Modeling with Pathways</a>：MFU 的定义与计算。</li>
+<li><a href="https://docs.nvidia.com/deploy/nvidia-smi/index.html">NVIDIA-SMI 文档</a>：GPU utilization 的口径。</li>
+<li><a href="https://docs.pytorch.org/docs/2.9/notes/cuda.html">PyTorch CUDA semantics</a>：异步执行与同步。</li>
+<li><a href="https://docs.pytorch.org/docs/2.9/profiler.html">PyTorch Profiler API</a> 与 <a href="https://docs.pytorch.org/tutorials/recipes/recipes/profiler_recipe.html">官方教程</a>：采集、调度、导出与开销。</li>
+<li><a href="https://docs.pytorch.org/docs/2.9/generated/torch.autograd.profiler.record_function.html">record_function</a>、<a href="https://docs.pytorch.org/docs/2.9/generated/torch.cuda.Event.html">torch.cuda.Event</a>、<a href="https://github.com/pytorch/kineto">Kineto</a>：区域标记、设备事件与采集组件。</li>
+<li><a href="https://docs.nvidia.com/cupti/main/main.html">CUPTI 使用指南</a> 与 <a href="https://docs.nvidia.com/cupti/api/group__CUPTI__ACTIVITY__API.html">Activity API</a>：回调、活动、关联与时间戳。</li>
+<li><a href="https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/env.html#nccl-profiler-plugin">NCCL Profiler Plugin 配置</a>：插件选择与加载。</li>
+<li><a href="https://docs.nvidia.com/nsight-systems/UserGuide/index.html">Nsight Systems</a> 与 <a href="https://docs.nvidia.com/nsight-compute/ProfilingGuide/index.html">Nsight Compute Profiling Guide</a>：系统时间线、kernel 指标和 replay。</li>
+<li><a href="https://docs.pytorch.org/tutorials/intermediate/scaled_dot_product_attention_tutorial.html">PyTorch SDPA 教程</a> 与 <a href="https://docs.pytorch.org/docs/2.9/generated/torch.nn.functional.scaled_dot_product_attention.html">SDPA API</a>：Attention 实现、mask 与后端选择。</li>
+<li><a href="https://perfetto.dev/docs/getting-started/other-formats">Perfetto 外部格式</a>、<a href="https://perfetto.dev/docs/visualization/large-traces">大 Trace 分析</a>、<a href="https://perfetto.dev/docs/concepts/config">Trace 配置</a>：导入、分析与压缩能力。</li>
+<li><a href="https://docs.pytorch.org/docs/2.9/generated/torch.cuda.nvtx.range.html">NVTX range</a> 与 <a href="https://docs.nvidia.com/nsight-compute/NsightComputeCli/index.html">Nsight Compute CLI</a>：阶段标记与 kernel 筛选。</li>
+<li><a href="https://docs.pytorch.org/docs/2.14/profiler.html">PyTorch 2.14 Profiler</a>、<a href="https://perfetto.dev/docs/analysis/sql-tables#slice">Perfetto slice 定义</a>、<a href="https://www.brendangregg.com/flamegraphs.html">Flame Graphs</a>：接口版本、区间统计与火焰图语义。</li>
+</ol>
+<footer><a href="../index.html#notes">← All notes</a></footer></article></main></body></html>

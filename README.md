@@ -10,7 +10,8 @@ The site uses a single HTML entry point and hash-addressable views:
 - `#info` — education, research experience, projects, skills, and fun facts;
 - `#research` — publication-style research and system entries;
 - `#blog` — categorized writing archive;
-- `#blog/<slug>` — individual article view.
+- `#blog/<slug>` — individual article view;
+- `#notes` — searchable research notes, linked to rendered standalone pages.
 
 ## Local preview
 
@@ -39,4 +40,10 @@ Every Research item follows the same data shape in `siteData.research`: identifi
 
 ## Deployment
 
-Publish this directory as the root of the `lijiemingjimmy.github.io` repository. No build step or external runtime dependency is required.
+The live GitHub Pages source is the `gh-pages` branch, root directory. The `main` branch contains the historical al-folio template and is not the current homepage. Publish changes to `gh-pages`. Pages are served as static files (`.nojekyll`).
+
+This checkout is at `/Users/lijieming/Downloads/Ideas/personal-site`. The earlier standalone source copy is at `/Users/lijieming/Downloads/写作与沟通/lijiemingjimmy.github.io`.
+
+Notes are generated from the Markdown files directly under the parent Ideas directory. See `scripts/build-notes.*` for the import/rendering workflow. Keep original notes unchanged; regenerate the published HTML when notes change.
+
+The RUA-Eval external blog URL was supplied by the site owner; it returned 404 when checked on 2026-11-01. Retain the intended link without inventing article content.

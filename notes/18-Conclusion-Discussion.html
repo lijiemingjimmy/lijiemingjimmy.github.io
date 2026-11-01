@@ -1,0 +1,116 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Conclusion / Discussion：机器人学习正在从“生成动作”走向“持续改进” · Jieming Li</title><link rel="stylesheet" href="../assets/styles.css"><link rel="stylesheet" href="../assets/notes.css"><link rel="stylesheet" href="vendor/katex/katex.min.css"></head><body class="note-page"><header class="note-nav"><a href="../index.html#notes">← Notes</a><a href="../index.html">Jieming Li</a></header><main class="note-layout"><aside class="note-outline"><p class="eyebrow">On this page</p><nav aria-label="目录"><ol><li><a href="#section-0">1. 17 篇工作可以分成四条主线</a></li><li><a href="#section-1">2. 跨 embodiment 的关键不是复制动作</a></li><li><a href="#section-2">3. 更好的未来预测不一定带来更好的控制</a></li><li><a href="#section-3">4. 强化学习正在从“重新训练策略”变成“调整生成分布”</a></li><li><a href="#section-4">5. Agent 的上限取决于可验证的反馈</a></li><li><a href="#section-5">6. 仿真质量会成为新的瓶颈</a></li><li><a href="#section-6">7. 数据问题最终会变成系统问题</a></li><li><a href="#section-7">8. 需要统一的评估问题</a></li><li><a href="#section-8">9. 总体判断</a></li></ol></nav></aside><article class="note-content" id="content"><p class="eyebrow">Research notebook · 研究笔记</p><h1 id="noteTitle">Conclusion / Discussion：机器人学习正在从“生成动作”走向“持续改进”</h1>
+<p>这 17 篇工作虽然来自不同方向，但它们正在回答同一个问题：机器人能不能不依赖大量人工设计和逐任务训练，而是利用数据、仿真、世界模型、程序搜索和真实反馈，持续获得新的能力？</p>
+<p>从整体上看，当前的进展并不是由某一个模型单独带来的，而是多个层次同时发生变化：基础模型开始理解更长的行为过程，生成式策略可以接受强化学习后训练，LLM 可以搜索奖励程序和技能程序，仿真资产可以自动构建，真实机器人也开始被放进持续反馈的学习循环里。</p>
+<h2 id="section-0">1. 17 篇工作可以分成四条主线</h2>
+<p>第一条是 <strong>Human-to-Robot Transfer</strong>。λ₀使用第一人称全身数据，EgoLAP使用Language Action和Motion Rationale，PatternDex则通过物体运动和接触关系来跨越不同机械手之间的差异。它们分别把可迁移信息放在全身运动、语言语义和交互结构上。</p>
+<p>第二条是 <strong>World-Action Model</strong>。Long-WAM强调长时历史与因果视频预测，RoboActualizer尝试冻结世界模型、只训练未来选择和动作实现模块，VPP2先提升操作视频预测再蒸馏动作策略，UniWAM则把物理推理、未来生成和动作预测放到统一系统中。</p>
+<p>第三条是 <strong>生成式策略的强化学习</strong>。QF3关注如何避免Critic把Flow Policy推向分布外动作，Generate-Track-Improve通过结构化探索改进运动生成器，I-BFM则提前学习可以被Reward调用的行为表示。</p>
+<p>第四条是 <strong>Agentic Skill Learning 与 Real2Sim</strong>。InterEvolve让Agent进化Reward Program，Skill2Real让Agent在仿真中学习并保存可迁移技能，USDCraft用程序化建模生成可仿真的Articulated Asset，DITTO-X则改善人类接管和失败示教的数据接口。</p>
+<p>这几条路线并不是互相独立的。更强的世界模型可以帮助技能搜索，更可靠的技能库可以产生更多训练数据，更好的仿真资产可以降低搜索成本，而真实接管数据又可以帮助模型覆盖失败和边界状态。</p>
+<h2 id="section-1">2. 跨 embodiment 的关键不是复制动作</h2>
+<p>λ₀、EgoLAP和PatternDex给出了三种不同答案：</p>
+<table>
+<thead>
+<tr>
+<th>路线</th>
+<th>跨 embodiment 共享的信息</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>λ₀</td>
+<td>全身运动表示、手部运动和机器人适配接口</td>
+</tr>
+<tr>
+<td>EgoLAP</td>
+<td>结构化语言动作和运动原因</td>
+</tr>
+<tr>
+<td>PatternDex</td>
+<td>物体运动、接触点和 Interaction Pattern</td>
+</tr>
+</tbody>
+</table>
+<p>直接复制人的关节轨迹往往会遇到尺寸、关节数和可达性问题。更稳定的做法，是把人的动作转成机器人仍然需要完成的中间目标：物体应该怎样运动、手腕应该靠近哪里、需要建立什么接触关系、下一步动作的物理原因是什么。</p>
+<p>未来值得研究的方向，是把三种信息结合起来：语言负责表达任务意图，Interaction Pattern负责表达接触和物体运动，机器人自身的控制器负责把它们实现成适合本体的动作。</p>
+<h2 id="section-2">3. 更好的未来预测不一定带来更好的控制</h2>
+<p>Long-WAM、RoboActualizer、VPP2和UniWAM都依赖未来表示，但它们对世界模型的使用方式不同。</p>
+<p>真正有用的未来预测至少需要满足三个条件：</p>
+<ol>
+<li>预测包含任务相关的信息，而不只是视觉上合理的像素变化。</li>
+<li>这些信息能够改变动作选择，而不是只作为额外的生成目标。</li>
+<li>预测出错时，动作策略仍然能够恢复，而不是把预测错误放大成控制失败。</li>
+</ol>
+<p>因此，“视频生成质量更高”不能直接等同于“机器人控制更好”。后续比较 WAM 时，除了任务成功率，还应该同时观察预测误差、动作误差、闭环恢复和长历史带来的真实收益。</p>
+<p>RoboActualizer说明，如果冻结世界模型已经包含足够好的时间结构，轻量的Actualizer也可以获得不错的动作性能。VPP2则说明，如果世界模型没有真正理解操作事件，仅仅冻结它并不够。两条路线的差异，本质上取决于预训练世界模型是否已经覆盖了目标任务所需的物理和语义结构。</p>
+<h2 id="section-3">4. 强化学习正在从“重新训练策略”变成“调整生成分布”</h2>
+<p>QF3、Generate-Track-Improve和I-BFM的优化对象并不相同：</p>
+<table>
+<thead>
+<tr>
+<th>工作</th>
+<th>主要优化对象</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>QF3</td>
+<td>Flow Policy 的动作生成分布</td>
+</tr>
+<tr>
+<td>Generate-Track-Improve</td>
+<td>全身运动生成器的轨迹分布</td>
+</tr>
+<tr>
+<td>I-BFM</td>
+<td>可以被不同 Reward 调用的行为表示</td>
+</tr>
+</tbody>
+</table>
+<p>这说明强化学习不一定要从随机策略开始，也不一定要对整个大模型做昂贵的端到端更新。它可以在已有生成器、已有行为表示或已有回放数据上进行受约束的改进。</p>
+<p>QF3适合研究预训练动作策略的低成本后训练，Generate-Track-Improve适合研究高维运动生成器如何利用真实反馈修正，I-BFM则更接近“先建立行为基础，再用新奖励组合能力”的长期路线。</p>
+<h2 id="section-4">5. Agent 的上限取决于可验证的反馈</h2>
+<p>InterEvolve和Skill2Real都体现了 Test-Time Compute 的价值，但它们依赖的抽象不同。</p>
+<ul>
+<li>InterEvolve通过修改 Reward Program，让冻结控制器调用和组合已有能力。</li>
+<li>Skill2Real通过 Shared Robot API 学习可执行程序，并用 Verifier 和 Governor 管理技能记忆。</li>
+</ul>
+<p>两者的共同点是，Agent 不是只靠语言推理得到答案，而是要执行候选方案、观察结果、分析失败，再决定是否保留改动。</p>
+<p>这也是 ENPIRE 思路与它们的共同基础：如果环境不能重置、结果不能验证、失败不能被记录，更多搜索轮次只会更快地积累错误。</p>
+<p>长期看，技能库不应该只保存一个奖励函数或一个动作程序，还可以同时保存：</p>
+<ul>
+<li>适用的初始状态和环境条件；</li>
+<li>已验证的奖励或成功判定；</li>
+<li>可执行技能程序；</li>
+<li>失败模式和恢复策略；</li>
+<li>与其他技能的组合方式。</li>
+</ul>
+<p>这样积累的不是一次性的轨迹，而是可以被下一次研究继续调用的经验。</p>
+<h2 id="section-5">6. 仿真质量会成为新的瓶颈</h2>
+<p>Physics Engine 对比、USDCraft和Skill2Real共同说明，仿真不是一个中性的容器。</p>
+<p>不同引擎对接触、摩擦、穿透、软体和冲击的处理可能不同。同一策略在不同引擎中得到的成功率、接触力和物体轨迹也可能完全不同。USDCraft可以从扫描几何中恢复可动结构，但几何和关节轴准确，并不等于质量、摩擦和接触动力学已经准确。</p>
+<p>因此，仿真评估不能只看最终成功率。对于接触丰富的任务，还需要比较接触力、穿透深度、物体轨迹、恢复行为以及跨引擎结果。仿真到真实的关键，不是找到一个“最好的引擎”，而是知道当前引擎在哪些现象上不可信。</p>
+<h2 id="section-6">7. 数据问题最终会变成系统问题</h2>
+<p>真实机器人、第一人称视频、遥操作、仿真轨迹、失败示教和程序生成数据各自有价值，但它们的视角、动作空间、噪声和分布不同。</p>
+<p>DITTO-X说明高质量的人类中途接管数据可以有效补足失败恢复；λ₀和EgoLAP说明人类数据可以提供机器人示教中缺少的全身或语义先验；Long-WAM和VPP2则试图从视频中获得更长的任务结构。</p>
+<p>下一阶段的数据建设，重点可能不是单纯增加小时数，而是记录更多机器人真正需要的东西：错误发生前的状态、失败后的恢复过程、任务阶段切换、接触变化和不同 embodiment 下仍然成立的中间目标。</p>
+<h2 id="section-7">8. 需要统一的评估问题</h2>
+<p>这批工作使用了成功率、任务进度、轨迹质量、F1、延迟、接触力和跨域结果等不同指标。它们各自合理，但很难直接比较系统能力。</p>
+<p>更完整的评估至少应同时包含：</p>
+<ul>
+<li>未见任务与未见对象；</li>
+<li>长时序执行与中途扰动；</li>
+<li>预测失败后的恢复；</li>
+<li>不同初始状态和不同 embodiment；</li>
+<li>仿真到真实的迁移；</li>
+<li>推理延迟和运行成本；</li>
+<li>人工接管次数以及接管后的数据价值。</li>
+</ul>
+<p>只有当这些指标一起报告时，才能判断一个系统究竟是学会了通用能力，还是在固定设置下找到了有效捷径。</p>
+<h2 id="section-8">9. 总体判断</h2>
+<p>这 17 篇工作反映出机器人学习正在从“训练一个能完成任务的策略”，转向“建立一个可以持续产生、验证、修正和复用技能的系统”。</p>
+<p>在这个系统里，世界模型负责提供未来结构，生成式策略负责提出动作，强化学习负责调整行为分布，Agent 负责搜索程序和技能，仿真负责降低试验成本，真实机器人负责提供最终反馈。</p>
+<p>最值得深入研究的组合，不是简单把一个更大的 VLA、LLM 和机器人堆在一起，而是把它们连接成可靠的闭环：</p>
+<p><strong>可预测的世界状态 + 可执行的技能表示 + 受约束的策略改进 + 可验证的真实反馈。</strong></p>
+<p>如果缺少其中任何一环，系统都可能在演示中表现很好，却难以长期运行。真正的突破，应该体现在机器人能够面对新任务、执行偏离、接触失败和环境变化时，继续利用世界状态、技能记忆和反馈完成目标。</p>
+<footer><a href="../index.html#notes">← All notes</a></footer></article></main></body></html>

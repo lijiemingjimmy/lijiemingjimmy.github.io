@@ -1,0 +1,31 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>HTT：不同触觉传感器，能不能学到共同的接触表征？ · Jieming Li</title><link rel="stylesheet" href="../assets/styles.css"><link rel="stylesheet" href="../assets/notes.css"><link rel="stylesheet" href="vendor/katex/katex.min.css"></head><body class="note-page"><header class="note-nav"><a href="../index.html#notes">← Notes</a><a href="../index.html">Jieming Li</a></header><main class="note-layout"><aside class="note-outline"><p class="eyebrow">On this page</p><nav aria-label="目录"><ol><li><a href="#section-0">1. 问题不只是触觉数据少，还有输入长得不一样</a></li><li><a href="#section-1">2. 传感器专用前端，加共享 Transformer</a></li><li><a href="#section-2">3. 为什么需要重建，也需要跨模态对齐</a></li><li><a href="#section-3">4. 95% 对 50%，应该怎样解读</a></li><li><a href="#section-4">5. 与 SharpaDex 最直接的连接</a></li><li><a href="#section-5">6. 共享表征最终要服务动作</a></li></ol></nav></aside><article class="note-content" id="content"><p class="eyebrow">Research notebook · 研究笔记</p><h1 id="noteTitle">HTT：不同触觉传感器，能不能学到共同的接触表征？</h1>
+<p>拧螺丝时，机器人需要知道的是有没有抓稳、接触位置是否变化、物体是否开始滑动。但传感器给出的可能是一张形变图，也可能是一组力和力矩。<strong>HTT（Heterogeneous Tactile Transformer）想把这些不同形式的读数，转成可迁移的触觉特征。</strong></p>
+<p>这篇笔记以提供的 SharpaDex 解读为线索，并对照了<a href="https://arxiv.org/html/2606.29948v1">论文</a>。实验数字沿用所给材料；对 SharpaDex 的实验建议属于研究推演。另有<a href="https://clear-nus.github.io/blog/htt">作者介绍</a>和<a href="https://github.com/jxbi1010/HTT">官方代码</a>。</p>
+<h2 id="section-0">1. 问题不只是触觉数据少，还有输入长得不一样</h2>
+<p>视觉模型较容易共享预训练数据，因为不同相机至少都能输出图像。触觉传感器的差别更大：成像方式、空间分辨率、力信号维度、表面材料和接触几何，都可能变化。</p>
+<p>如果每换一种传感器，就重新训练一个触觉编码器，已有数据很难积累成共同能力。反过来，把所有读数强行拼成相同长度，也不会自动消除物理含义上的差异。</p>
+<p>HTT 的切入点是把两件事分开：前端处理传感器特性，后面的共享网络学习接触中可复用的信息。共同表征不要求原始数据具有相同外观。</p>
+<h2 id="section-1">2. 传感器专用前端，加共享 Transformer</h2>
+<p>论文采用传感器专用的编码器和解码器，中间共享 Transformer 主干，并通过跨模态预测器连接不同传感器。不同输入先转成统一维度的 token，再进入共享网络。<a href="https://arxiv.org/html/2606.29948v1">方法来源</a></p>
+<p>可以用一个示意流程理解：</p>
+<p><strong>某种传感器的原始观测 → 对应的前端与 token 化 → 共享 Transformer → 触觉 embedding → 下游任务。</strong></p>
+<p>这里的“共享”值得注意：它不是要求一套前端直接接受任意新硬件，也不是认为所有触觉信号可以无损互换。专用前端仍然承担适配工作，共享主干则提供知识迁移的入口。</p>
+<p>因此，评估新传感器迁移时，要分别看前端如何适配、共享网络是否更新、下游策略用了多少示范。只报告“未见传感器”，不足以说明部署成本。</p>
+<h2 id="section-2">3. 为什么需要重建，也需要跨模态对齐</h2>
+<p>HTT 将 masked reconstruction 与跨模态预测结合：前者让每种传感器从局部可见信息恢复被遮挡内容；后者利用成对的跨传感器观测，约束不同输入对应的表示。<a href="https://arxiv.org/html/2606.29948v1">训练机制</a></p>
+<p>直观上，重建解决“是否理解自己的输入”，跨模态学习解决“能否与另一种传感器交流”。如果只有重建，网络可能记住固定背景或表面纹理；如果只有对齐，又可能丢掉对精细控制有用的传感器特有细节。</p>
+<p>但对齐也有前提：两路信号确实需要提供相互关联的接触信息。同步时间戳能帮助配对，却不意味着两种传感器观测到了完全相同的空间位置和受力过程。未来扩展数据时，采集设计与损失函数同样重要。</p>
+<h2 id="section-3">4. 95% 对 50%，应该怎样解读</h2>
+<p>提供的材料报告，在 Wave 平台的玩具螺丝拧紧任务中，使用预训练触觉 embedding 的方案成功率为 95%，直接使用原始 wrench 输入的方案为 50%。这个对比说明触觉表示值得认真研究，但不能直接写成“同一种信号，仅换编码就提升了 45 个百分点”。</p>
+<p>原始 wrench 是紧凑的力/力矩表示，预训练特征则可能受益于额外训练数据、跨传感器监督及输入信息差异。要把收益归因于编码方法，需要确认两组是否使用相同原始模态，并对齐数据、模型容量和策略训练预算。</p>
+<p>因此，更稳妥的结论是：<strong>这个任务中的完整预训练表征方案优于所报告的原始 wrench 基线；哪些因素带来提升，需要进一步消融。</strong> 该数字也不等于所有触觉任务的平均收益。</p>
+<h2 id="section-4">5. 与 SharpaDex 最直接的连接</h2>
+<p>SharpaDex 同时记录指尖 wrench 与触觉视频，为研究“紧凑受力信息”和“空间形变信息”的关系提供了条件。</p>
+<p>下面是可做的实验，不是 HTT 已完成的 SharpaDex 实验：固定同一批 episode 和下游策略，先比较原始 wrench、小型可训练 wrench 编码器、预训练 wrench 表征；再加入触觉图像，检查空间信息带来的额外收益。</p>
+<p>这样可以把“多了一种模态”和“已有模态编码得更好”拆开。否则，一个更强的多模态预训练模型打赢原始向量基线，并不能告诉我们只保留低成本 wrench 是否已经足够。</p>
+<p>对拧紧、擦拭这类任务，受力变化可能已经很有用；对薄片抓取和接触点对齐，局部形变图可能提供额外信息。这些是待检验的任务假设，不能预先当成结论。</p>
+<h2 id="section-5">6. 共享表征最终要服务动作</h2>
+<p>重建误差低、分类准确，并不保证策略能及时纠正滑移。控制需要知道的是当前动作是否应该继续、减力、换接触点，或者重新抓取。</p>
+<p>因此，我更关注三类验证：遮挡或扰动下策略能否恢复；更换物体或采集批次后是否仍然有效；在同等推理延迟下，表征收益是否保留。数据划分应按 episode、物体或采集条件进行，避免相邻帧泄漏。</p>
+<p>HTT 对 WAM/VLA 的启发，是把触觉看成值得预训练的感知通道。先学习接触表示，再让动作模块利用这些表示，是一个清晰的方向；但是否需要统一所有传感器，以及统一到什么程度，应由下游控制收益决定。</p>
+<footer><a href="../index.html#notes">← All notes</a></footer></article></main></body></html>

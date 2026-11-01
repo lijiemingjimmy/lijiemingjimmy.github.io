@@ -1,0 +1,82 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Fleet Learning：机器人集群学习 · Jieming Li</title><link rel="stylesheet" href="../assets/styles.css"><link rel="stylesheet" href="../assets/notes.css"><link rel="stylesheet" href="vendor/katex/katex.min.css"></head><body class="note-page"><header class="note-nav"><a href="../index.html#notes">← Notes</a><a href="../index.html">Jieming Li</a></header><main class="note-layout"><aside class="note-outline"><p class="eyebrow">On this page</p><nav aria-label="目录"><ol><li><a href="#section-0">1. 什么是 Fleet Learning</a></li><li><a href="#section-1">2. 基本学习闭环</a></li><li><a href="#section-2">3. 与 Continual Learning、Online RL 的区别</a></li><li><a href="#section-3">4. Fleet-DAgger：共享有限的人类监督</a></li><li><a href="#section-4">5. Fleet 与 Fleeting 的术语区别</a></li><li><a href="#section-5">6. 核心理解</a></li></ol></nav></aside><article class="note-content" id="content"><p class="eyebrow">Research notebook · 研究笔记</p><h1 id="noteTitle">Fleet Learning：机器人集群学习</h1>
+<p>本文根据提供的概念解读整理。</p>
+<h2 id="section-0">1. 什么是 Fleet Learning</h2>
+<p>Fleet Learning 指多个已部署机器人共同收集经验，并通过共享策略更新，让整个集群受益。</p>
+<p><strong>一台机器人遇到的问题，可以成为整个机器人集群的学习经验。</strong></p>
+<p>例如部署了 1000 台抓取机器人：</p>
+<ol>
+<li>机器人 A 抓取透明杯子失败，系统记录视觉观测、动作和接触状态。</li>
+<li>失败轨迹汇入共享数据平台，与其他机器人收集的数据合并。</li>
+<li>使用模仿学习、强化学习或其他方法更新策略。</li>
+<li>验证更新后的策略，再部署到集群。</li>
+<li>其他机器人可能由此学会处理类似情况。</li>
+</ol>
+<p>共享数据和模型更新提供了集体改进的机会，但单次失败数据并不保证所有机器人自动获得提升，仍需训练和验证。</p>
+<h2 id="section-1">2. 基本学习闭环</h2>
+<p>令 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>N</mi></mrow><annotation encoding="application/x-tex">N</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord mathnormal" style="margin-right:0.109em;">N</span></span></span></span></eq> 为机器人数量，<eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msubsup><mi>D</mi><mi>i</mi><mrow><mi mathvariant="normal">n</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">w</mi></mrow></msubsup></mrow><annotation encoding="application/x-tex">D_i^{\mathrm{new}}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.942em;vertical-align:-0.2587em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0278em;">D</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.6644em;"><span style="top:-2.4413em;margin-left:-0.0278em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span><span style="top:-3.063em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight" style="margin-right:0.0139em;">new</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2587em;"><span></span></span></span></span></span></span></span></span></span></eq> 为机器人 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>i</mi></mrow><annotation encoding="application/x-tex">i</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6595em;"></span><span class="mord mathnormal">i</span></span></span></span></eq> 新收集的经验，则可以概念性地写成：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi>D</mi><mrow><mi>t</mi><mo>+</mo><mn>1</mn></mrow></msub><mo>=</mo><msub><mi>D</mi><mi>t</mi></msub><mo>∪</mo><munderover><mo>⋃</mo><mrow><mi>i</mi><mo>=</mo><mn>1</mn></mrow><mi>N</mi></munderover><msubsup><mi>D</mi><mi>i</mi><mrow><mi mathvariant="normal">n</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">w</mi></mrow></msubsup></mrow><annotation encoding="application/x-tex">
+D_{t+1}=D_t\cup\bigcup_{i=1}^{N}D_i^{\mathrm{new}}
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8917em;vertical-align:-0.2083em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0278em;">D</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:-0.0278em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">t</span><span class="mbin mtight">+</span><span class="mord mtight">1</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2083em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0278em;">D</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:-0.0278em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">∪</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:3.106em;vertical-align:-1.2777em;"></span><span class="mop op-limits"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.8283em;"><span style="top:-1.8723em;margin-left:0em;"><span class="pstrut" style="height:3.05em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">i</span><span class="mrel mtight">=</span><span class="mord mtight">1</span></span></span></span><span style="top:-3.05em;"><span class="pstrut" style="height:3.05em;"></span><span><span class="mop op-symbol large-op">⋃</span></span></span><span style="top:-4.3em;margin-left:0em;"><span class="pstrut" style="height:3.05em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right:0.109em;">N</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:1.2777em;"><span></span></span></span></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0278em;">D</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.7144em;"><span style="top:-2.453em;margin-left:-0.0278em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight" style="margin-right:0.0139em;">new</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.247em;"><span></span></span></span></span></span></span></span></span></span></span></eqn></section><section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi>π</mi><msub><mi>θ</mi><mrow><mi>t</mi><mo>+</mo><mn>1</mn></mrow></msub></msub><mo>=</mo><mi mathvariant="normal">Train</mi><mo>⁡</mo><mo stretchy="false">(</mo><msub><mi>π</mi><msub><mi>θ</mi><mi>t</mi></msub></msub><mo separator="true">,</mo><msub><mi>D</mi><mrow><mi>t</mi><mo>+</mo><mn>1</mn></mrow></msub><mo stretchy="false">)</mo></mrow><annotation encoding="application/x-tex">
+\pi_{\theta_{t+1}}=
+\operatorname{Train}(\pi_{\theta_t},D_{t+1})
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.7223em;vertical-align:-0.2918em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0359em;">π</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:-0.0359em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right:0.0278em;">θ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3173em;"><span style="top:-2.357em;margin-left:-0.0278em;margin-right:0.0714em;"><span class="pstrut" style="height:2.5em;"></span><span class="katex-sizing reset-size3 size1 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">t</span><span class="mbin mtight">+</span><span class="mord mtight">1</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2025em;"><span></span></span></span></span></span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2918em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1.0001em;vertical-align:-0.2501em;"></span><span class="mop"><span class="mord mathrm">Train</span></span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0359em;">π</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:-0.0359em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right:0.0278em;">θ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2963em;"><span style="top:-2.357em;margin-left:-0.0278em;margin-right:0.0714em;"><span class="pstrut" style="height:2.5em;"></span><span class="katex-sizing reset-size3 size1 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.143em;"><span></span></span></span></span></span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2501em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0278em;">D</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:-0.0278em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">t</span><span class="mbin mtight">+</span><span class="mord mtight">1</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2083em;"><span></span></span></span></span></span></span><span class="mclose">)</span></span></span></span></span></eqn></section><p>这构成了一个循环：</p>
+<pre><code class="language-text">Deployment
+    ↓
+Data Collection
+    ↓
+Training
+    ↓
+Evaluation
+    ↓
+Redeployment
+</code></pre>
+<p>机器人不一定在本地实时更新参数。Fleet Learning 可以采用集中式、周期性的训练与部署。</p>
+<h2 id="section-2">3. 与 Continual Learning、Online RL 的区别</h2>
+<table>
+<thead>
+<tr>
+<th>概念</th>
+<th>主要关注点</th>
+<th>与 Fleet Learning 的关系</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Fleet Learning</td>
+<td>多台机器人共享经验，通过策略更新改进集群表现</td>
+<td>描述集群层面的学习闭环</td>
+</tr>
+<tr>
+<td>Continual Learning</td>
+<td>持续吸收新知识，同时避免灾难性遗忘</td>
+<td>可用于持续更新集群共享模型</td>
+</tr>
+<tr>
+<td>Online RL</td>
+<td>利用与环境交互产生的数据更新策略</td>
+<td>可以作为集群策略的训练方法</td>
+</tr>
+<tr>
+<td>Offline RL</td>
+<td>从已有数据学习策略</td>
+<td>可以利用集群积累的轨迹训练</td>
+</tr>
+<tr>
+<td>Imitation Learning</td>
+<td>从示教或纠正数据学习行为</td>
+<td>可以利用人工接管和成功示教数据</td>
+</tr>
+</tbody>
+</table>
+<p>这些概念并不互斥。Fleet Learning 强调经验来自多个部署实例、学习成果能够共享；它不限定只能使用某一种训练算法。</p>
+<h2 id="section-3">4. Fleet-DAgger：共享有限的人类监督</h2>
+<p>提供材料介绍了 <strong>Fleet-DAgger: Interactive Robot Fleet Learning with Scalable Human Supervision（CoRL 2022）</strong>。</p>
+<p>它关注的问题是：当多个机器人同时运行时，怎样共享有限的人类监督资源？</p>
+<p>机器人需要帮助时，远程操作者可以介入；这些纠正数据再用于改进策略，使后续部署减少类似失败。其研究重点既包括从纠正数据学习，也包括如何在机器人之间分配人类监督。</p>
+<p>这里的人类接管不只是帮助某台机器人完成当前任务，还可以成为后续集群学习的数据来源。</p>
+<h2 id="section-4">5. Fleet 与 Fleeting 的术语区别</h2>
+<p>在机器人集群学习语境下，应使用 <strong>Fleet Learning</strong>。</p>
+<p>“Fleeting” 意为短暂、转瞬即逝，与 “Fleet” 的机群或集群含义不同。Fleeting Learning 并不是这里所讨论概念的标准名称；若某篇文章使用该表达，需要结合其具体定义判断。</p>
+<h2 id="section-5">6. 核心理解</h2>
+<p>Fleet Learning 将分散在各台机器人上的部署经验汇聚成共同的学习资源。重点是形成可重复的“收集—训练—验证—部署”闭环，使局部经验有机会转化为整个集群的能力改进。</p>
+<footer><a href="../index.html#notes">← All notes</a></footer></article></main></body></html>

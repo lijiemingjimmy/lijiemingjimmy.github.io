@@ -1,0 +1,343 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Tactile：从接触力学到数据驱动操作 · Jieming Li</title><link rel="stylesheet" href="../assets/styles.css"><link rel="stylesheet" href="../assets/notes.css"><link rel="stylesheet" href="vendor/katex/katex.min.css"></head><body class="note-page"><header class="note-nav"><a href="../index.html#notes">← Notes</a><a href="../index.html">Jieming Li</a></header><main class="note-layout"><aside class="note-outline"><p class="eyebrow">On this page</p><nav aria-label="目录"><ol><li><a href="#section-0">1. 触觉到底增加了什么信息</a></li><li><a href="#section-1">2. 从接触到信号，中间发生了什么</a></li><li><a href="#section-4">3. 接触力学里，先理解这几个量</a></li><li><a href="#section-9">4. 力学驱动方法：让接触状态直接参与控制</a></li><li><a href="#section-13">5. 触觉模仿学习：除了增加输入，还要改变执行方式</a></li><li><a href="#section-17">6. 触觉强化学习：核心成本是交互数据</a></li><li><a href="#section-18">7. 触觉仿真要同时解决两件事</a></li><li><a href="#section-19">8. 触觉接入 VLA：接在哪里，决定它能影响什么</a></li><li><a href="#section-20">9. 触觉世界模型：预测怎样真正进入控制</a></li><li><a href="#section-22">10. 跨传感器学习：统一格式还不够</a></li><li><a href="#section-23">11. 主动触觉：为了弄清楚，再动一下</a></li><li><a href="#section-24">12. 怎样证明触觉真的帮上了忙</a></li><li><a href="#section-28">13. 和现有笔记、WAM 研究怎样连起来</a></li></ol></nav></aside><article class="note-content" id="content"><p class="eyebrow">Research notebook · 研究笔记</p><h1 id="noteTitle">Tactile：从接触力学到数据驱动操作</h1>
+<p>机器人把手指移到瓶盖两侧，视觉上已经“抓住”了，但它可能只碰到了边缘，也可能正在打滑，还可能把瓶子捏变形。触觉要解决的，就是这些发生在接触之后、外部相机又很难看清的问题。</p>
+<p><strong>触觉的价值，是让机器人知道自己施加的动作正在产生什么物理后果，并及时改变下一步动作。</strong> 要把它用好，需要一起考虑传感器、状态估计、策略学习和执行频率。</p>
+<p>这篇笔记根据所给《两万字入门 Tactile：接触力学到数据驱动操作》整理，补充基础公式和研究思考。对应英文综述为 <strong>Tactile-Based Robotic Manipulation: From Mechanics-Driven to Data-Driven Perspectives</strong>，作者 Jingyi Xiang、Yixuan Wang、Wenzhen Yuan，来自 UIUC；arXiv 提交于 2026 年 10 月 21 日，期刊页面同日上线 Review in Advance。<a href="https://arxiv.org/abs/2610.30438">论文</a>｜<a href="https://arxiv.org/html/2610.30438v1">全文</a>｜<a href="https://www.annualreviews.org/content/journals/10.1146/annurev-control-032125-030330">期刊页面</a></p>
+<p>下面沿着“信号 → 接触状态 → 控制 → 学习”的顺序解释。具体工作的方法分类以提供的综述材料为基础；最后的实验设计和 WAM 连接是进一步的研究建议。</p>
+<h2 id="section-0">1. 触觉到底增加了什么信息</h2>
+<p>拿起一个杯子，视觉可以告诉机器人杯子的位置、朝向和大致形状。本体感知告诉它手指和关节在哪里。触觉进一步回答：</p>
+<ul>
+<li>手指是否真的接触到了杯壁，接触发生在哪里？</li>
+<li>接触力是否足够，是否正在增大？</li>
+<li>杯子有没有相对手指滑动或旋转？</li>
+<li>杯底碰到了桌面，还是仍由手指承重？</li>
+</ul>
+<p>这些信息分别对应接触建立、受力调节、抓取稳定和任务阶段变化。它们对下一步动作的影响很具体：继续闭合、停止加力、调整抓取位置，或者松手。</p>
+<p>触觉也有自己的盲区。一次局部接触通常不能唯一确定整个物体的形状、位姿或材料。同样的读数，可能由不同的接触方向、压入深度和物体刚度产生。因此，很多任务需要结合视觉、运动学、动作历史和连续触觉观测，才能判断当前发生了什么。</p>
+<p>可以用下面的关系理解多模态分工：</p>
+<p><strong>视觉提供场景和几何背景，本体感知提供机器人自身状态，触觉提供局部交互结果，历史把这些观测连成一个过程。</strong></p>
+<h2 id="section-1">2. 从接触到信号，中间发生了什么</h2>
+<h3 id="section-2">2.1 传感器通常测的是接触引起的响应</h3>
+<p>常见触觉传感器通过材料或结构的形变，再利用电阻、电容、磁场、压电或光学方式生成读数。因而，从原始读数到接触力、几何或滑移判断，中间通常还有标定和估计。</p>
+<p>以视觉式触觉为例，相机拍摄的是接触介质的形变和标记运动。图像中的变化与接触有关，但不能把每个像素直接当作一个独立、准确的三轴力测量。</p>
+<table>
+<thead>
+<tr>
+<th>传感方式</th>
+<th>常见输出</th>
+<th>适合回答的问题</th>
+<th>使用时要注意什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>腕部或指端力/力矩传感器</td>
+<td>合力、合力矩</td>
+<td>阻力方向、整体载荷、插入是否卡住</td>
+<td>多处接触会混合，通常不能直接恢复局部压力分布</td>
+</tr>
+<tr>
+<td>阵列式触觉</td>
+<td>多个单元的压力或力相关读数</td>
+<td>接触位置、压力分布、多指是否建立接触</td>
+<td>单元方向、间距、串扰和标定随硬件变化</td>
+</tr>
+<tr>
+<td>视觉式触觉</td>
+<td>接触图像、标记位移、重建几何</td>
+<td>局部形状、接触区域、剪切形变和滑移线索</td>
+<td>弹性体、光照、成像和处理延迟都会影响结果</td>
+</tr>
+</tbody>
+</table>
+<p>这三类不是互斥的系统方案。一个机器人可以同时用腕部 F/T、指端触觉和外部相机，让不同测量补足彼此缺少的信息。</p>
+<h3 id="section-3">2.2 合力相同，接触分布仍可能不同</h3>
+<p>把接触区域记为 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>A</mi></mrow><annotation encoding="application/x-tex">A</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord mathnormal">A</span></span></span></span></eq>，表面单位面积上的作用力向量记为 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi mathvariant="bold">t</mi><mo stretchy="false">(</mo><mi mathvariant="bold">x</mi><mo stretchy="false">)</mo></mrow><annotation encoding="application/x-tex">\mathbf t(\mathbf x)</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathbf">t</span><span class="mopen">(</span><span class="mord mathbf">x</span><span class="mclose">)</span></span></span></span></eq>，则合力和相对于参考点 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi mathvariant="bold">x</mi><mn>0</mn></msub></mrow><annotation encoding="application/x-tex">\mathbf x_0</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.5944em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathbf">x</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">0</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span></eq> 的合力矩为：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mi mathvariant="bold">F</mi><mo>=</mo><msub><mo>∫</mo><mi>A</mi></msub><mi mathvariant="bold">t</mi><mo stretchy="false">(</mo><mi mathvariant="bold">x</mi><mo stretchy="false">)</mo><mtext> </mtext><mi>d</mi><mi>A</mi><mo separator="true">,</mo><mspace width="2em"/><mi mathvariant="bold-italic">τ</mi><mo>=</mo><msub><mo>∫</mo><mi>A</mi></msub><mo stretchy="false">(</mo><mi mathvariant="bold">x</mi><mo>−</mo><msub><mi mathvariant="bold">x</mi><mn>0</mn></msub><mo stretchy="false">)</mo><mo>×</mo><mi mathvariant="bold">t</mi><mo stretchy="false">(</mo><mi mathvariant="bold">x</mi><mo stretchy="false">)</mo><mtext> </mtext><mi>d</mi><mi>A</mi><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+\mathbf F=\int_A\mathbf t(\mathbf x)\,dA,
+\qquad
+\boldsymbol\tau=\int_A(\mathbf x-\mathbf x_0)\times\mathbf t(\mathbf x)\,dA.
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6861em;"></span><span class="mord mathbf">F</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:2.2719em;vertical-align:-0.9119em;"></span><span class="mop"><span class="mop op-symbol large-op" style="margin-right:0.4445em;position:relative;top:-0.0011em;">∫</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:-0.4336em;"><span style="top:-1.7881em;margin-left:-0.4445em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">A</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.9119em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathbf">t</span><span class="mopen">(</span><span class="mord mathbf">x</span><span class="mclose">)</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal">d</span><span class="mord mathnormal">A</span><span class="mpunct">,</span><span class="mspace" style="margin-right:2em;"></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord"><span class="mord boldsymbol" style="margin-right:0.1347em;">τ</span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:2.2719em;vertical-align:-0.9119em;"></span><span class="mop"><span class="mop op-symbol large-op" style="margin-right:0.4445em;position:relative;top:-0.0011em;">∫</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:-0.4336em;"><span style="top:-1.7881em;margin-left:-0.4445em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">A</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.9119em;"><span></span></span></span></span></span></span><span class="mopen">(</span><span class="mord mathbf">x</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord"><span class="mord mathbf">x</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">0</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mclose">)</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">×</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathbf">t</span><span class="mopen">(</span><span class="mord mathbf">x</span><span class="mclose">)</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal">d</span><span class="mord mathnormal">A</span><span class="mord">.</span></span></span></span></span></eqn></section><p>这是帮助理解信号关系的基础表达式：F/T 保留了接触分布的一部分整体结果，但不同分布可能产生相同的合力和力矩。要判断物体是否只压在指尖边缘，局部接触图通常比一个总力值更直接。</p>
+<p>反过来，如果任务只要求维持合适的推力，高维触觉图像未必带来相称的收益。<strong>传感器提供的信息，最好与控制真正需要的量对得上。</strong></p>
+<h2 id="section-4">3. 接触力学里，先理解这几个量</h2>
+<h3 id="section-5">3.1 法向力、切向力与摩擦</h3>
+<p>法向力表示沿接触法线的压紧作用，切向力表示沿接触表面的作用。在简化的库仑静摩擦模型中，单个接触的切向力需要满足：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mi mathvariant="normal">∥</mi><msub><mi mathvariant="bold">F</mi><mi>t</mi></msub><mi mathvariant="normal">∥</mi><mo>≤</mo><mi>μ</mi><msub><mi>F</mi><mi>n</mi></msub><mo separator="true">,</mo><mspace width="2em"/><msub><mi>F</mi><mi>n</mi></msub><mo>≥</mo><mn>0.</mn></mrow><annotation encoding="application/x-tex">
+\|\mathbf F_t\|\leq\mu F_n,\qquad F_n\geq0.
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord">∥</span><span class="mord"><span class="mord mathbf">F</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mord">∥</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">≤</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.8778em;vertical-align:-0.1944em;"></span><span class="mord mathnormal">μ</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1389em;">F</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:-0.1389em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">n</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:2em;"></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1389em;">F</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:-0.1389em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">n</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">≥</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.6444em;"></span><span class="mord">0.</span></span></span></span></span></eqn></section><p>其中 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>μ</mi></mrow><annotation encoding="application/x-tex">\mu</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.625em;vertical-align:-0.1944em;"></span><span class="mord mathnormal">μ</span></span></span></span></eq> 为静摩擦系数。它解释了为什么适当增加夹持力有助于抵抗滑动，也解释了为什么表面变滑后，原来的夹持动作可能失效。</p>
+<p>但这只是局部摩擦约束。多指抓取还需要考虑接触位置、力矩、重力、外部扰动和物体允许承受的载荷。满足某一个接触的摩擦条件，不等于整个抓取就稳定；持续加力也可能压坏物体。</p>
+<h3 id="section-6">3.2 初始滑移与整体滑移</h3>
+<p>软接触中，接触区域可能先出现局部相对滑动，而其他区域仍然黏着，之后才发展成更大范围的滑动。检测这种早期变化，可以为调整夹持力或抓取姿态争取时间。</p>
+<p>所给材料把 incipient slip 描述为“局部脱离”，这里应改为<strong>局部开始发生切向滑动</strong>。它与法向上的接触分离不是同一个现象。GelSight 的相关研究正是利用接触区域内标记运动的不一致来判断部分滑移；初始滑移与其他状态之间的实际判定边界也依赖具体定义。<a href="https://people.csail.mit.edu/yuan_wz/GelSight1/ICRA15_2740_FI.pdf">GelSight 剪切与滑移研究</a></p>
+<p>滑移并不总是失败。手内调整物体时，机器人有时需要允许某处受控滑动，同时保持其他接触。因此，控制目标应当说明哪些接触需要稳定、哪些接触允许变化。</p>
+<h3 id="section-7">3.3 接触位置、局部形状与物体位姿</h3>
+<p>触觉可以观察压痕、边缘和接触区域，结合已知物体模型与机器人运动学，进一步估计物体相对手指的位姿。</p>
+<p>其中，“局部几何”和“整体位姿”是不同层次的信息。摸到一块平面，通常不足以确定整个物体的朝向；摸到独特的棱角，或者连续探索多个位置，约束才会更强。</p>
+<h3 id="section-8">3.4 外部接触与物体属性</h3>
+<p>夹着插销往孔里送时，传感器未必安装在插销尖端，但尖端受到的阻力会通过物体传到手上。结合受力、运动方向和几何，就有机会判断碰到孔边、正常插入，还是已经到底。</p>
+<p>硬度、摩擦和质心等属性也常需要通过动作来识别。轻压后观察形变，轻推后观察滑动，或者抬起后观察力矩，都是在用交互获取信息。单帧触觉无法直接给出这些属性的全部答案。</p>
+<h2 id="section-9">4. 力学驱动方法：让接触状态直接参与控制</h2>
+<p>这条路线可以写成：</p>
+<p><strong>原始信号 → 有物理意义的描述符 → 状态判断 → 控制动作。</strong></p>
+<p>“力学驱动”不要求所有模块都是解析公式。可以用神经网络估计接触位置或滑移，再把估计结果交给显式控制器。关键是系统保留了能够解释的中间量。</p>
+<h3 id="section-10">连续修正：触觉伺服</h3>
+<p>假设用接触力、位置和方向组成触觉状态 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi mathvariant="bold">s</mi><mi>t</mi></msub></mrow><annotation encoding="application/x-tex">\mathbf s_t</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.5944em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathbf">s</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span></eq>，目标为 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msup><mi mathvariant="bold">s</mi><mo>∗</mo></msup></mrow><annotation encoding="application/x-tex">\mathbf s^*</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6887em;"></span><span class="mord"><span class="mord mathbf">s</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.6887em;"><span style="top:-3.063em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mbin mtight">∗</span></span></span></span></span></span></span></span></span></span></span></eq>。一个局部、简化的伺服关系为：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mover accent="true"><mi mathvariant="bold">s</mi><mo>˙</mo></mover><mo>≈</mo><msub><mi>J</mi><mi>s</mi></msub><mi mathvariant="bold">u</mi><mo separator="true">,</mo><mspace width="2em"/><mi mathvariant="bold">u</mi><mo>=</mo><mo>−</mo><mi>λ</mi><msubsup><mi>J</mi><mi>s</mi><mo>†</mo></msubsup><mo stretchy="false">(</mo><msub><mi mathvariant="bold">s</mi><mi>t</mi></msub><mo>−</mo><msup><mi mathvariant="bold">s</mi><mo>∗</mo></msup><mo stretchy="false">)</mo><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+\dot{\mathbf s}\approx J_s\mathbf u,
+\qquad
+\mathbf u=-\lambda J_s^\dagger(\mathbf s_t-\mathbf s^*).
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6813em;"></span><span class="mord katex-accent"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.6813em;"><span style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span class="mord mathbf">s</span></span><span style="top:-3.0134em;"><span class="pstrut" style="height:3em;"></span><span class="accent-body" style="left:-0.1389em;"><span class="mord">˙</span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">≈</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.8778em;vertical-align:-0.1944em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0962em;">J</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:-0.0962em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">s</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mord mathbf">u</span><span class="mpunct">,</span><span class="mspace" style="margin-right:2em;"></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathbf">u</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1.1491em;vertical-align:-0.25em;"></span><span class="mord">−</span><span class="mord mathnormal">λ</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0962em;">J</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.8991em;"><span style="top:-2.453em;margin-left:-0.0962em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">s</span></span></span><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mbin mtight">†</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.247em;"><span></span></span></span></span></span></span><span class="mopen">(</span><span class="mord"><span class="mord mathbf">s</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord"><span class="mord mathbf">s</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.7387em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mbin mtight">∗</span></span></span></span></span></span></span></span><span class="mclose">)</span><span class="mord">.</span></span></span></span></span></eqn></section><p><eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>J</mi><mi>s</mi></msub></mrow><annotation encoding="application/x-tex">J_s</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0962em;">J</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:-0.0962em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">s</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span></eq> 描述小幅运动怎样改变触觉状态，<eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi mathvariant="bold">u</mi></mrow><annotation encoding="application/x-tex">\mathbf u</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.4444em;"></span><span class="mord mathbf">u</span></span></span></span></eq> 为控制速度，<eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>λ</mi><mo>&gt;</mo><mn>0</mn></mrow><annotation encoding="application/x-tex">\lambda&gt;0</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.7335em;vertical-align:-0.0391em;"></span><span class="mord mathnormal">λ</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">&gt;</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.6444em;"></span><span class="mord">0</span></span></span></span></eq> 为增益。这是原理示意：实际系统还要处理关节约束、接触切换和估计误差。</p>
+<p>例如沿物体边缘移动时，可以同时维持适当压力和接触位置；插入时，则根据阻力修正对准方向。</p>
+<h3 id="section-11">事件触发：改变当前操作阶段</h3>
+<p>另一类方法用触觉决定何时切换动作：检测到接触后停止接近，出现滑移后重新抓取，确认支撑建立后松手。</p>
+<p>这里最重要的是事件判断。一个阈值太敏感会频繁误触发，太迟钝又会错过恢复机会。连续控制和阶段切换可以同时存在，例如先识别“已经接触”，再进入柔顺插入控制。</p>
+<h3 id="section-12">调整控制器：让动作适应物体</h3>
+<p>机器人也可以先探索物体，再根据估计的刚度、质心或隐式物理特征选择控制参数。</p>
+<p>阻抗控制约束运动偏差与作用力之间的动态关系；导纳控制则常根据测得的外力生成运动响应。它们都能用于柔顺交互，但具体控制接口和稳定性条件不同。策略输出力目标、位姿目标或柔顺参数时，需要与实际底层控制器相匹配。</p>
+<p>这也说明，数据驱动方法完全可以沿用这些控制结构。学习负责决定目标，成熟的反馈控制负责持续执行。</p>
+<h2 id="section-13">5. 触觉模仿学习：除了增加输入，还要改变执行方式</h2>
+<p>一个触觉增强策略可以表示为：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi>π</mi><mi>θ</mi></msub><mo stretchy="false">(</mo><msub><mi>a</mi><mrow><mi>t</mi><mo>:</mo><mi>t</mi><mo>+</mo><mi>H</mi><mo>−</mo><mn>1</mn></mrow></msub><mo>∣</mo><msub><mi>I</mi><mi>t</mi></msub><mo separator="true">,</mo><msub><mi>T</mi><mrow><mi>t</mi><mo>−</mo><mi>k</mi><mo>:</mo><mi>t</mi></mrow></msub><mo separator="true">,</mo><msub><mi>q</mi><mi>t</mi></msub><mo separator="true">,</mo><mi>g</mi><mo stretchy="false">)</mo><mo separator="true">,</mo></mrow><annotation encoding="application/x-tex">
+\pi_\theta(a_{t:t+H-1}\mid I_t,T_{t-k:t},q_t,g),
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0359em;">π</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:-0.0359em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0278em;">θ</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal">a</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3283em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">t</span><span class="mrel mtight">:</span><span class="mord mathnormal mtight">t</span><span class="mbin mtight">+</span><span class="mord mathnormal mtight" style="margin-right:0.0813em;">H</span><span class="mbin mtight">−</span><span class="mord mtight">1</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2083em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">∣</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0785em;">I</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:-0.0785em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1389em;">T</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:-0.1389em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">t</span><span class="mbin mtight">−</span><span class="mord mathnormal mtight" style="margin-right:0.0315em;">k</span><span class="mrel mtight">:</span><span class="mord mathnormal mtight">t</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2083em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0359em;">q</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:-0.0359em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal" style="margin-right:0.0359em;">g</span><span class="mclose">)</span><span class="mpunct">,</span></span></span></span></span></eqn></section><p>其中 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>I</mi><mi>t</mi></msub></mrow><annotation encoding="application/x-tex">I_t</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0785em;">I</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:-0.0785em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span></eq> 为视觉，<eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>T</mi><mrow><mi>t</mi><mo>−</mo><mi>k</mi><mo>:</mo><mi>t</mi></mrow></msub></mrow><annotation encoding="application/x-tex">T_{t-k:t}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8917em;vertical-align:-0.2083em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1389em;">T</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:-0.1389em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">t</span><span class="mbin mtight">−</span><span class="mord mathnormal mtight" style="margin-right:0.0315em;">k</span><span class="mrel mtight">:</span><span class="mord mathnormal mtight">t</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2083em;"><span></span></span></span></span></span></span></span></span></span></eq> 为触觉历史，<eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>q</mi><mi>t</mi></msub></mrow><annotation encoding="application/x-tex">q_t</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.625em;vertical-align:-0.1944em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0359em;">q</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:-0.0359em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span></eq> 为本体状态，<eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>g</mi></mrow><annotation encoding="application/x-tex">g</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.625em;vertical-align:-0.1944em;"></span><span class="mord mathnormal" style="margin-right:0.0359em;">g</span></span></span></span></eq> 为任务条件，输出长度为 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>H</mi></mrow><annotation encoding="application/x-tex">H</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord mathnormal" style="margin-right:0.0813em;">H</span></span></span></span></eq> 的动作块。不同方法会省略或增加部分输入。</p>
+<h3 id="section-14">5.1 为什么直接拼接可能不够</h3>
+<p>如果大多数示范在接触前就已经决定了动作，模型可能仅靠视觉完成训练，很少使用触觉。接触信号还可能存在时间偏差、尺度差异和传感器背景，让有效信息更难提取。</p>
+<p>常见处理包括专用触觉编码器、几何或力图预处理、视觉—触觉对齐、掩码重建和未来触觉预测。训练中暂时遮挡视觉，也可以检验或促进触觉的使用，但仍要确认完整观测下的性能。</p>
+<p>触觉历史的作用也需要具体判断：瞬时读数描述现在受力多少，短期变化有助于识别滑移、碰撞和载荷转移。历史长度应与事件时间尺度匹配，而不是越长越好。</p>
+<h3 id="section-15">5.2 预测一个动作块，不代表必须完整执行</h3>
+<p>设预测长度为 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>H</mi></mrow><annotation encoding="application/x-tex">H</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord mathnormal" style="margin-right:0.0813em;">H</span></span></span></span></eq>，每次重新观测前执行 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>K</mi><mo>≤</mo><mi>H</mi></mrow><annotation encoding="application/x-tex">K\leq H</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8193em;vertical-align:-0.136em;"></span><span class="mord mathnormal" style="margin-right:0.0715em;">K</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">≤</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord mathnormal" style="margin-right:0.0813em;">H</span></span></span></span></eq> 个动作，控制周期为 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi mathvariant="normal">Δ</mi><mi>t</mi></mrow><annotation encoding="application/x-tex">\Delta t</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord">Δ</span><span class="mord mathnormal">t</span></span></span></span></eq>。在没有额外反馈修正的情况下，策略级反馈间隔约为：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mi mathvariant="normal">Δ</mi><msub><mi>T</mi><mrow><mi mathvariant="normal">f</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">d</mi><mi mathvariant="normal">b</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">k</mi></mrow></msub><mo>≈</mo><mi>K</mi><mi mathvariant="normal">Δ</mi><mi>t</mi><mo>+</mo><mtext>感知、通信与推理延迟</mtext><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+\Delta T_{\mathrm{feedback}}\approx K\Delta t+\text{感知、通信与推理延迟}.
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord">Δ</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1389em;">T</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:-0.1389em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">feedback</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">≈</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.7667em;vertical-align:-0.0833em;"></span><span class="mord mathnormal" style="margin-right:0.0715em;">K</span><span class="mord">Δ</span><span class="mord mathnormal">t</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord text"><span class="mord cjk_fallback">感知、通信与推理延迟</span></span><span class="mord">.</span></span></span></span></span></eqn></section><p>因此，真正影响接触响应的是执行长度和整条反馈链的延迟。底层关节伺服可能一直闭环，但上层策略在这段时间里没有根据新的接触信息改动作。</p>
+<p>一个常见设计是：视觉策略产生较长时域的名义动作，快速触觉策略根据新读数修正局部执行。例如：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi>a</mi><mi>t</mi></msub><mo>=</mo><msubsup><mi>a</mi><mi>t</mi><mrow><mi mathvariant="normal">b</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">s</mi><mi mathvariant="normal">e</mi></mrow></msubsup><mo>+</mo><mi mathvariant="normal">Δ</mi><msubsup><mi>a</mi><mi>t</mi><mrow><mi mathvariant="normal">t</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">h</mi></mrow></msubsup><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+a_t=a_t^{\mathrm{base}}+\Delta a_t^{\mathrm{touch}}.
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.5806em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal">a</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1.1461em;vertical-align:-0.247em;"></span><span class="mord"><span class="mord mathnormal">a</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.8991em;"><span style="top:-2.453em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">base</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.247em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1.1461em;vertical-align:-0.247em;"></span><span class="mord">Δ</span><span class="mord"><span class="mord mathnormal">a</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.8991em;"><span style="top:-2.453em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">touch</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.247em;"><span></span></span></span></span></span></span><span class="mord">.</span></span></span></span></span></eqn></section><p>这是残差接口的示意，不代表所有触觉方法都采用动作相加。修正也可以发生在去噪过程、目标力、阻抗参数或动作块重生成中。</p>
+<h3 id="section-16">5.3 动作输出也值得重新设计</h3>
+<p>只预测位置，可能要求学习器间接学会如何控制接触力。另一种做法是同时预测目标位姿和目标力，或者输出抓取力与手指间距，再交给对应的柔顺控制器。</p>
+<p>这条路线把“如何表达动作”也纳入了学习设计。比较方法时，最好确认改进来自触觉输入、输出空间，还是更适合接触任务的底层控制。</p>
+<h2 id="section-17">6. 触觉强化学习：核心成本是交互数据</h2>
+<p>触觉 RL 可以把接触信号作为策略输入，也可以用它构建奖励或判断阶段。传感器输入、奖励信号和任务成功标签承担不同职责，应分别说明。</p>
+<table>
+<thead>
+<tr>
+<th>路线</th>
+<th>主要好处</th>
+<th>主要成本或难点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>真实世界 RL</td>
+<td>直接面对实际接触和真实传感器响应</td>
+<td>数据采集、自动重置、失败处理、传感器磨损</td>
+</tr>
+<tr>
+<td>仿真训练后迁移</td>
+<td>可以并行采样，并使用训练期特权信息</td>
+<td>接触力学与传感器信号都存在仿真差距</td>
+</tr>
+<tr>
+<td>IL 后用 RL 微调</td>
+<td>从已有技能出发，学习示范覆盖不足的纠正行为</td>
+<td>微调分布、奖励设计，以及原技能是否保持</td>
+</tr>
+<tr>
+<td>学习残差或操作基元</td>
+<td>缩小需要学习的动作范围</td>
+<td>基础策略与修正模块的职责、权限和更新频率</td>
+</tr>
+</tbody>
+</table>
+<p>仿真中的 critic 或教师可以使用物体真实位姿，部署策略则只使用实际能测到的信号。要检查这些特权信息是否确实在部署时被移除。</p>
+<p>二值接触或稀疏接触位置，有时已经足以改善手内操作；检测细微滑移、辨别接触形状时，则可能需要更丰富的输入。<strong>输入丰富程度、训练数据需求和可仿真程度之间的取舍，与任务密切相关。</strong></p>
+<p>所给综述中的 VT-Refine 是 IL 与 RL 结合的例子：先用真实示范训练视觉—触觉扩散策略，再在仿真中用任务成功奖励微调，随后迁移回真实机器人。理解这类工作时，要同时看它学到了什么纠正动作，以及这些动作依赖的触觉信号能否可靠迁移。</p>
+<h2 id="section-18">7. 触觉仿真要同时解决两件事</h2>
+<p>第一件事是<strong>物理接触是否合理</strong>：物体与手指在哪里接触、如何形变、受到多大力、是否滑动。</p>
+<p>第二件事是<strong>传感器会如何响应</strong>：这些接触会变成什么压力读数、标记运动或图像，还会经过什么噪声、滤波和延迟。</p>
+<p>因此，视觉式触觉图像看起来很真实，并不能独立证明受力和摩擦正确；接触力算得合理，也不意味着生成的传感器图像足以直接用于真实部署。</p>
+<p>降低触觉表征维度，可以减少必须精确复现的细节。域随机化则覆盖材料、接触和测量参数的变化；域适配尝试缩小真实与仿真信号的差异。它们解决的是不同层面的问题。</p>
+<p>评估迁移时，最好沿着同一条链检查：</p>
+<p><strong>接触是否发生正确 → 读数是否对应正确 → 表征是否稳定 → 策略是否及时响应。</strong></p>
+<p>如果失败来自时间戳错位，继续提高图像渲染质量可能帮不上忙。如果失败来自摩擦规律偏差，单纯对齐图像外观也不够。</p>
+<h2 id="section-19">8. 触觉接入 VLA：接在哪里，决定它能影响什么</h2>
+<p>预训练 VLM 已有视觉和语言知识，却不一定理解触觉读数。因此，触觉 VLA 既要学习新模态，也要决定新信号如何影响原有表征和动作生成。</p>
+<p>根据所给综述，可以把常见接口整理为：</p>
+<table>
+<thead>
+<tr>
+<th>接入位置</th>
+<th>触觉主要参与什么</th>
+<th>需要验证的问题</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>VLM 主干的输入与注意力</td>
+<td>多模态语义和状态融合</td>
+<td>是否学到接触知识，是否影响原有语义能力</td>
+</tr>
+<tr>
+<td>Action expert</td>
+<td>动作生成与接触修正</td>
+<td>新触觉到来后能否及时改变动作</td>
+</tr>
+<tr>
+<td>独立触觉专家或残差模块</td>
+<td>保留专门的快速反馈通路</td>
+<td>与基础策略如何配合，纠正范围是否足够</td>
+</tr>
+<tr>
+<td>高层属性推断与低层控制分别接入</td>
+<td>规划使用物体属性，执行使用连续信号</td>
+<td>两层信息是否一致，阶段切换是否可靠</td>
+</tr>
+</tbody>
+</table>
+<p>综述列出的工作包括 Tactile-VLA、FD-VLA、TA-VLA、T-Rex、AT-VLA、VLA-Touch 和 FTP-1 等。它们探索了不同的信息通路，不能仅凭“用了触觉 token”就认为方法相同。</p>
+<p>例如，已有的 <a href="T-Rex.html">T-Rex 笔记</a>具体讨论了 action expert 与 tactile expert 分段完成 flow-matching 去噪的设计。这个接口让触觉参与后段动作生成，但实际响应速度仍取决于传感、缓存更新、推理和执行安排。</p>
+<p>对 VLA 的评价还应覆盖不同任务指令和对象。某个装配任务成功率提高，说明该任务的交互更可靠；要进一步说明语言条件下的通用操作能力，还需要跨任务与指令变化的实验。</p>
+<h2 id="section-20">9. 触觉世界模型：预测怎样真正进入控制</h2>
+<p>把视觉、触觉、本体感知和必要历史编码为状态 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>z</mi><mi>t</mi></msub></mrow><annotation encoding="application/x-tex">z_t</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.5806em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.044em;">z</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:-0.044em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span></eq>，一个动作条件预测模型可以写成：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mover accent="true"><mi>z</mi><mo>^</mo></mover><mrow><mi>t</mi><mo>+</mo><mn>1</mn></mrow></msub><mo>=</mo><msub><mi>f</mi><mi>θ</mi></msub><mo stretchy="false">(</mo><msub><mi>z</mi><mi>t</mi></msub><mo separator="true">,</mo><msub><mi>a</mi><mi>t</mi></msub><mo stretchy="false">)</mo><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+\hat z_{t+1}=f_\theta(z_t,a_t).
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.9028em;vertical-align:-0.2083em;"></span><span class="mord"><span class="mord katex-accent"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.6944em;"><span style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span class="mord mathnormal" style="margin-right:0.044em;">z</span></span><span style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span class="accent-body" style="left:-0.1944em;"><span class="mord">^</span></span></span></span></span></span></span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:-0.044em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">t</span><span class="mbin mtight">+</span><span class="mord mtight">1</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2083em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1076em;">f</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:-0.1076em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0278em;">θ</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.044em;">z</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:-0.044em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal">a</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mclose">)</span><span class="mord">.</span></span></span></span></span></eqn></section><p>动作条件使模型能够区分“继续压”“稍微退”“沿表面移动”等不同选择的后果。仅预测接下来常见的触觉变化，还不足以评价任意候选动作。</p>
+<p>预测与控制之间至少有四种接口：</p>
+<table>
+<thead>
+<tr>
+<th>接口</th>
+<th>预测结果怎样被使用</th>
+<th>所给材料中的例子</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>规划与 MPC</td>
+<td>推演候选动作，比较目标误差或代价，再执行其中一小段</td>
+<td>早期触觉预测控制、RoboPack、VT-WM</td>
+</tr>
+<tr>
+<td>策略条件</td>
+<td>把预测的未来接触作为动作生成的条件</td>
+<td>ViTacFormer、DreamTacVLA</td>
+</tr>
+<tr>
+<td>快速纠正</td>
+<td>比较预期接触与实际接触，调整当前执行</td>
+<td>OmniVTA</td>
+</tr>
+<tr>
+<td>训练辅助目标</td>
+<td>用未来预测改善表征，部署时不必运行完整预测器</td>
+<td>综述讨论的辅助预测路线</td>
+</tr>
+</tbody>
+</table>
+<p>还有一种相关用途是<strong>学习状态估计</strong>。已有 <a href="WM-Craftnet.html">WM-Craftnet 笔记</a>中的递归世界模型，把历史交互压成供策略使用的状态；不能因此默认策略正在模型内部搜索动作。</p>
+<p>所给综述用紧凑状态与高维观测/latent 区分 dynamics model 和 world model，这是一种组织文献的方式。领域内也有状态空间世界模型，例如 <a href="SuperMimic.html">SuperMimic</a>。阅读具体方法时，直接确认输入、预测目标、训练损失和控制接口，会比仅依赖名称更清楚。</p>
+<h3 id="section-21">预测误差低，为什么仍可能控制失败</h3>
+<p>假设大部分时间都处于稳定接触，只有很短一段出现滑移。模型持续预测“没有明显变化”，可能得到不错的平均误差，却恰好错过决定成败的事件。</p>
+<p>因此，除了图像或 latent 的平均误差，还应检查接触建立、解除、滑移与力突变附近的预测，并测量预测误差是否改变了动作选择。</p>
+<p>预测也需要由新观测不断校正。用预测触觉填补短期信息缺口，和长期完全替代真实触觉，是不同的部署条件。<a href="PhysWord.html">PhysWord 笔记</a>可以继续讨论这一区别，以及动作语义如何与未来物理动态联系起来。</p>
+<h2 id="section-22">10. 跨传感器学习：统一格式还不够</h2>
+<p>两种触觉传感器即使都输出图像，也可能具有不同的表面形状、刚度、光照、分辨率和力学响应。相同物体、相似动作，不一定产生相似的像素。</p>
+<p>一种路线是传感器专用前端加共享 latent，让模型学习可迁移的接触结构；另一种路线是尽量转成接触几何、力或压力分布等物理量，建立共同接口。</p>
+<p>两条路线可以结合：显式量提供物理参照，latent 保留难以完全建模的细节。已有 <a href="HTT.html">HTT 笔记</a>讨论了专用编码器与共享 Transformer 的分工。</p>
+<p>但统一的 token 维度不等于统一的物理含义。还要考虑坐标系、单位、接触位置、时间戳和测量置信度。转换成物理量也会引入标定误差，并可能丢掉原始信号中有用的信息。</p>
+<p>跨传感器实验应说明：目标传感器是否见过、是否需要成对数据、适配了哪些模块、用了多少新示范，以及策略是否同时换了机器人本体。这样才能看清实际迁移成本。</p>
+<h2 id="section-23">11. 主动触觉：为了弄清楚，再动一下</h2>
+<p>机器人拿到一个陌生物体时，可以立即执行任务，也可以先做一次轻微的探索动作。</p>
+<p>例如夹住瓶盖后先施加小幅扭转，通过受力和位移判断是否抓稳、是否能够转动；插入前沿孔边轻微探索，以减少对准的不确定性。</p>
+<p>这类动作有两种作用：改变物体状态，同时获取与后续操作有关的信息。设计时可以概念性地考虑：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mtext>动作收益</mtext><mo>=</mo><mtext>任务推进</mtext><mo>+</mo><mi>β</mi><mtext> </mtext><mtext>信息收益</mtext><mo>−</mo><mi>γ</mi><mtext> </mtext><mtext>交互代价</mtext><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+\text{动作收益}=\text{任务推进}+\beta\,\text{信息收益}-\gamma\,\text{交互代价}.
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord text"><span class="mord cjk_fallback">动作收益</span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.7667em;vertical-align:-0.0833em;"></span><span class="mord text"><span class="mord cjk_fallback">任务推进</span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.8889em;vertical-align:-0.1944em;"></span><span class="mord mathnormal" style="margin-right:0.0528em;">β</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord text"><span class="mord cjk_fallback">信息收益</span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.8778em;vertical-align:-0.1944em;"></span><span class="mord mathnormal" style="margin-right:0.0556em;">γ</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord text"><span class="mord cjk_fallback">交互代价</span></span><span class="mord">.</span></span></span></span></span></eqn></section><p>这只是研究思路的示意，不是综述提出的统一算法。信息收益需要与实际决策关联：弄清楚摩擦，是否会改变夹持力；弄清楚接触位置，是否会改变插入方向。</p>
+<p>对 IL 来说，示范是否包含探索和失败恢复很重要；对 RL 来说，奖励是否允许“暂时不推进、先确认状态”很重要；对世界模型来说，则需要表达不同物理解释的不确定性，避免把一个模糊观测过早压成确定答案。</p>
+<p>主动视觉同样可以通过动作获取信息。触觉的特点在于，获取信息往往必须建立接触，而这次接触本身就会改变对象和后续观测。</p>
+<h2 id="section-24">12. 怎样证明触觉真的帮上了忙</h2>
+<p>下面是根据综述问题整理的实验建议。</p>
+<h3 id="section-25">12.1 把感知收益与系统改动分开</h3>
+<p>可以从同一视觉策略出发，逐步比较增加 F/T、增加局部触觉、使用专用表征、再加入快速触觉反馈的结果。</p>
+<p>比较时尽量对齐示范数量、策略容量、动作接口、执行长度和评估对象。如果高频控制与触觉一起加入，需要另外设置对照，才能区分更快反馈和新增模态分别贡献了多少。</p>
+<p>屏蔽、延迟或打乱触觉，可以帮助检查策略是否依赖正确的接触信息。但这些处理可能造成额外分布变化，应结合训练时移除模态的消融一起解释。</p>
+<h3 id="section-26">12.2 成功率之外，记录交互过程</h3>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th>能回答的问题</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>任务成功率、执行时间</td>
+<td>最终是否完成，是否需要反复试探</td>
+</tr>
+<tr>
+<td>峰值力、持续过载、物体损伤</td>
+<td>是否靠过大的作用力换取成功</td>
+</tr>
+<tr>
+<td>滑移次数、检测延迟、恢复率</td>
+<td>是否捕捉并处理关键接触事件</td>
+</tr>
+<tr>
+<td>观测到有效动作修正的延迟</td>
+<td>感知是否真正进入了及时反馈</td>
+</tr>
+<tr>
+<td>示范数、RL 交互次数、重置成本</td>
+<td>性能提升需要多少实际采集投入</td>
+</tr>
+<tr>
+<td>新物体、新表面、新传感器表现</td>
+<td>能否迁移到不同的交互条件</td>
+</tr>
+</tbody>
+</table>
+<p>数据采集最好同时保存原始触觉、处理后特征、时间戳、实际执行动作和必要的控制状态。只保存低频动作标签，可能无法重建某次滑移发生时控制器到底看到了什么。</p>
+<h3 id="section-27">12.3 让测试包含触觉能改变决策的情况</h3>
+<p>可以在物体外观基本不变时改变摩擦、质量分布或孔位偏差，也可以在执行中施加小扰动或增加局部遮挡。</p>
+<p>这些条件有助于判断策略是否会根据新的交互证据改变动作。正常轨迹与恢复轨迹应分别查看，因为“按计划完成”和“偏离计划后恢复”依赖的能力并不完全相同。</p>
+<h2 id="section-28">13. 和现有笔记、WAM 研究怎样连起来</h2>
+<p>现有触觉笔记覆盖了这条链上的不同环节：</p>
+<table>
+<thead>
+<tr>
+<th>笔记</th>
+<th>可以带着什么问题继续读</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="SharpaDex.html">SharpaDex</a></td>
+<td>双手与多指接触为什么需要协同判断？</td>
+</tr>
+<tr>
+<td><a href="DexTeleop-0.html">DexTeleop-0</a></td>
+<td>人类给出的运动意图，怎样通过力反馈修正成可执行示范？</td>
+</tr>
+<tr>
+<td><a href="HTT.html">HTT</a></td>
+<td>不同传感器怎样共享接触表征，又保留各自信息？</td>
+</tr>
+<tr>
+<td><a href="T-Rex.html">T-Rex</a></td>
+<td>触觉如何参与动作生成，并进入快速反馈？</td>
+</tr>
+<tr>
+<td><a href="WM-Craftnet.html">WM-Craftnet</a></td>
+<td>历史、动作与多模态预测怎样帮助估计接触状态？</td>
+</tr>
+<tr>
+<td><a href="PhysWord.html">PhysWord</a></td>
+<td>动作语义怎样与视觉、触觉的未来变化绑定？</td>
+</tr>
+</tbody>
+</table>
+<p>对 WAM 来说，一条值得验证的研究路线是：<strong>用视觉预测描述任务进展，用触觉预测描述局部接触变化，再让新观测持续修正执行。</strong></p>
+<p>例如，“把插销插入孔中”的视觉预测可以提供大致对准方向，触觉状态负责判断碰边、摩擦和到底；如果接触不符合预期，底层先小幅纠正，必要时再请求高层重新规划。</p>
+<p>这需要明确三个接口：高层传下来的目标是什么，低层可以自主修改什么，以及什么事件需要反馈给高层。若这些接口只是语言描述，很多连续控制细节仍然无处表达；若全部压成连续 latent，高层又可能难以判断当前技能是否完成。</p>
+<p>可以同时保留可解释的接触事件和连续交互状态：前者支持阶段切换，后者支持精细控制。至于显式物理量、共享 latent 和动作语义如何组合，应通过相同任务与反馈条件下的实验来决定。</p>
+<p>这篇综述最有用的地方，是把这些新模型重新放回接触过程：<strong>模型从哪里得到物理信息，怎样表示它，又能否在需要的时候把它变成正确的动作。</strong></p>
+<footer><a href="../index.html#notes">← All notes</a></footer></article></main></body></html>

@@ -1,0 +1,383 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>打假：别把 Benchmark 涨分直接写成推理能力进步 · Jieming Li</title><link rel="stylesheet" href="../assets/styles.css"><link rel="stylesheet" href="../assets/notes.css"><link rel="stylesheet" href="vendor/katex/katex.min.css"></head><body class="note-page"><header class="note-nav"><a href="../index.html#notes">← Notes</a><a href="../index.html">Jieming Li</a></header><main class="note-layout"><aside class="note-outline"><p class="eyebrow">On this page</p><nav aria-label="目录"><ol><li><a href="#section-0">1. 三份材料分别提供了什么证据</a></li><li><a href="#section-1">2. 先明确到底在比较什么</a></li><li><a href="#section-4">3. 三组有分量的事实，分别能说明什么</a></li><li><a href="#section-8">4. 常见说法逐条判定</a></li><li><a href="#section-9">5. 三份解读自身也需要核查</a></li><li><a href="#section-15">6. 一项可信的复核至少怎样做</a></li><li><a href="#section-21">7. 对具身 Agent / VLA，应该核查哪些类似问题</a></li><li><a href="#section-22">8. 怎样写出与证据强度匹配的研究结论</a></li></ol></nav></aside><article class="note-content" id="content"><p class="eyebrow">Research notebook · 研究笔记</p><h1 id="noteTitle">打假：别把 Benchmark 涨分直接写成推理能力进步</h1>
+<blockquote>
+<p><strong>主题</strong>：LLM 推理与强化学习研究中的评测、机制解释和能力主张核查<br>
+<strong>材料范围</strong>：A Sober Look、Spurious Rewards，以及 Incorrect Baseline Evaluations 评论与作者讨论<br>
+<strong>整理日期</strong>：2026-10-20<br>
+<strong>核查方式</strong>：整理用户提供的三份解读，核对原文、图表、版本记录与原始讨论；没有重新训练或复跑全部模型。</p>
+</blockquote>
+<p>三份材料共同提出一个研究问题：<strong>分数提高了，现有实验究竟排除了哪些更简单的解释？</strong></p>
+<p>需要被检查的解释包括：基线没调好、格式更匹配评分器、推理预算改变、采样偶然性，以及模型更常调用已有的成功策略。不同解释可能同时成立，训练也可能产生真实收益。</p>
+<p>“报告不充分”“归因过强”“无法复现”和“主观造假”需要不同证据。本文讨论可复核的实验问题，不依据这些材料判断作者的主观动机。</p>
+<h2 id="section-0">1. 三份材料分别提供了什么证据</h2>
+<table>
+<thead>
+<tr>
+<th>材料</th>
+<th>实验或论证方式</th>
+<th>主要发现</th>
+<th>证据边界</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://arxiv.org/html/2504.07086v2">A Sober Look</a></td>
+<td>量化评测因素、统一流程复测、逐题配对统计</td>
+<td>部分报告分数下降，部分 RL 收益较弱，也有可靠改善的模型</td>
+<td>调查的是特定公开模型；不构成所有 SFT 与 RL 的等预算因果比较</td>
+</tr>
+<tr>
+<td><a href="https://arxiv.org/html/2506.10947v2">Spurious Rewards</a></td>
+<td>更换奖励、跨模型实验、行为干预、clipping 消融</td>
+<td>部分 Qwen 模型用随机或错误标签奖励也能涨分</td>
+<td>现象依赖模型与设置；机制解释仍有未闭合部分</td>
+</tr>
+<tr>
+<td><a href="https://safe-lip-9a8.notion.site/Incorrect-Baseline-Evaluations-Call-into-Question-Recent-LLM-RL-Claims-2012f1fbf0ee8094ab8ded1953c15a37">Incorrect Baseline Evaluations</a></td>
+<td>对照多篇论文与外部参考基线</td>
+<td>部分 Pre-RL 分数明显低于其他评测</td>
+<td>缺少全部训练前后模型的同协议复测，不能直接给出每种方法的真实训练效应</td>
+</tr>
+</tbody>
+</table>
+<p>三种证据针对不同问题：分数能否复现、奖励信息是否必要，以及原有能力归因是否充分。不能把它们拼成“所有 RL 提升都已被推翻”。</p>
+<p>分篇笔记：<a href="A-Sober-Look-Reasoning-Evaluation.html">A Sober Look</a>、<a href="Spurious-Rewards.html">Spurious Rewards</a>、<a href="LLM-RL-Baseline-Evaluation-Critique.html">Baseline 评论</a>。</p>
+<h2 id="section-1">2. 先明确到底在比较什么</h2>
+<p>把观测到的准确率记为：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mi>A</mi><mo stretchy="false">(</mo><mi>θ</mi><mo separator="true">,</mo><mi>e</mi><mo separator="true">;</mo><mi>D</mi><mo stretchy="false">)</mo></mrow><annotation encoding="application/x-tex">
+A(\theta,e;D)
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal">A</span><span class="mopen">(</span><span class="mord mathnormal" style="margin-right:0.0278em;">θ</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal">e</span><span class="mpunct">;</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal" style="margin-right:0.0278em;">D</span><span class="mclose">)</span></span></span></span></span></eqn></section><p>其中 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>θ</mi></mrow><annotation encoding="application/x-tex">\theta</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6944em;"></span><span class="mord mathnormal" style="margin-right:0.0278em;">θ</span></span></span></span></eq> 为模型参数，<eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>D</mi></mrow><annotation encoding="application/x-tex">D</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord mathnormal" style="margin-right:0.0278em;">D</span></span></span></span></eq> 为测试题集合，<eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>e</mi></mrow><annotation encoding="application/x-tex">e</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.4306em;"></span><span class="mord mathnormal">e</span></span></span></span></eq> 包含 prompt、模板、解码策略、长度预算、parser、grader、软件和硬件等评测条件。</p>
+<p>跨论文常见的差值是：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi mathvariant="normal">Δ</mi><mrow><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">p</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">d</mi></mrow></msub><mo>=</mo><mi>A</mi><mo stretchy="false">(</mo><msub><mi>θ</mi><mrow><mi mathvariant="normal">R</mi><mi mathvariant="normal">L</mi></mrow></msub><mo separator="true">,</mo><msub><mi>e</mi><mn>1</mn></msub><mo separator="true">;</mo><mi>D</mi><mo stretchy="false">)</mo><mo>−</mo><mi>A</mi><mo stretchy="false">(</mo><msub><mi>θ</mi><mn>0</mn></msub><mo separator="true">,</mo><msub><mi>e</mi><mn>0</mn></msub><mo separator="true">;</mo><mi>D</mi><mo stretchy="false">)</mo></mrow><annotation encoding="application/x-tex">
+\Delta_{\mathrm{reported}}
+=A(\theta_{\mathrm{RL}},e_1;D)
+-A(\theta_0,e_0;D)
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.9694em;vertical-align:-0.2861em;"></span><span class="mord"><span class="mord">Δ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">reported</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal">A</span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0278em;">θ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3283em;"><span style="top:-2.55em;margin-left:-0.0278em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">RL</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal">e</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">1</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mpunct">;</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal" style="margin-right:0.0278em;">D</span><span class="mclose">)</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal">A</span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0278em;">θ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:-0.0278em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">0</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal">e</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">0</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mpunct">;</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal" style="margin-right:0.0278em;">D</span><span class="mclose">)</span></span></span></span></span></eqn></section><p>当 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>e</mi><mn>1</mn></msub><mo mathvariant="normal">≠</mo><msub><mi>e</mi><mn>0</mn></msub></mrow><annotation encoding="application/x-tex">e_1\ne e_0</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8889em;vertical-align:-0.1944em;"></span><span class="mord"><span class="mord mathnormal">e</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">1</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel"><span class="mrel"><span class="mord katex-vbox"><span class="katex-thinbox"><span class="rlap"><span class="katex-strut" style="height:0.8889em;vertical-align:-0.1944em;"></span><span class="katex-inner"><span class="mord"><span class="mrel"></span></span></span><span class="katex-fix"></span></span></span></span></span><span class="mspace nobreak"></span><span class="mrel">=</span></span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.5806em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal">e</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">0</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span></eq> 时，参数更新与配置变化混在一起。即使配置相同，涨分也仍可能来自格式、策略选择和求解质量等不同方面。</p>
+<h3 id="section-2">2.1 固定协议下，训练是否有效</h3>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi mathvariant="normal">Δ</mi><mrow><mi mathvariant="normal">t</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi></mrow></msub><mo stretchy="false">(</mo><mi>e</mi><mo stretchy="false">)</mo><mo>=</mo><mi>A</mi><mo stretchy="false">(</mo><msub><mi>θ</mi><mrow><mi mathvariant="normal">R</mi><mi mathvariant="normal">L</mi></mrow></msub><mo separator="true">,</mo><mi>e</mi><mo separator="true">;</mo><mi>D</mi><mo stretchy="false">)</mo><mo>−</mo><mi>A</mi><mo stretchy="false">(</mo><msub><mi>θ</mi><mn>0</mn></msub><mo separator="true">,</mo><mi>e</mi><mo separator="true">;</mo><mi>D</mi><mo stretchy="false">)</mo></mrow><annotation encoding="application/x-tex">
+\Delta_{\mathrm{train}}(e)
+=A(\theta_{\mathrm{RL}},e;D)-A(\theta_0,e;D)
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord"><span class="mord">Δ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3175em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">train</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mopen">(</span><span class="mord mathnormal">e</span><span class="mclose">)</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal">A</span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0278em;">θ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3283em;"><span style="top:-2.55em;margin-left:-0.0278em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">RL</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal">e</span><span class="mpunct">;</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal" style="margin-right:0.0278em;">D</span><span class="mclose">)</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal">A</span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0278em;">θ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:-0.0278em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">0</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal">e</span><span class="mpunct">;</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal" style="margin-right:0.0278em;">D</span><span class="mclose">)</span></span></span></span></span></eqn></section><p>它回答：在给定使用条件下，这次权重更新是否改善表现？它不要求模型必须创造全新的解题策略。</p>
+<h3 id="section-3">2.2 给基线同等调优机会后，是否仍有额外价值</h3>
+<p>对每个模型，在独立验证集上以可比预算选出配置：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mover accent="true"><mi>e</mi><mo stretchy="true">^</mo></mover><mi>m</mi></msub><mo>=</mo><mi mathvariant="normal">Select</mi><mo>⁡</mo><mo stretchy="false">(</mo><msub><mi>θ</mi><mi>m</mi></msub><mo separator="true">,</mo><msub><mi>D</mi><mrow><mi mathvariant="normal">v</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">l</mi></mrow></msub><mo separator="true">,</mo><mi>B</mi><mo stretchy="false">)</mo></mrow><annotation encoding="application/x-tex">
+\widehat e_m=\operatorname{Select}(\theta_m,D_{\mathrm{val}},B)
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8206em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord katex-accent"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.6706em;"><span style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span class="mord mathnormal">e</span></span><span class="svg-align" style="width:calc(100% - 0.1111em);margin-left:0.1111em;top:-3.4306em;"><span class="pstrut" style="height:3em;"></span><span style="height:0.24em;"><svg xmlns="http://www.w3.org/2000/svg" width="100%" height="0.24em" viewBox="0 0 1062 239" preserveAspectRatio="none"><path d="M529 0h5l519 115c5 1 9 5 9 10 0 1-1 2-1 3l-4 22
+c-1 5-5 9-11 9h-2L532 67 19 159h-2c-5 0-9-4-11-9l-5-22c-1-6 2-12 8-13z"/></svg></span></span></span></span></span></span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">m</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mop"><span class="mord mathrm">Select</span></span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0278em;">θ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:-0.0278em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">m</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0278em;">D</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:-0.0278em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">val</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal" style="margin-right:0.0502em;">B</span><span class="mclose">)</span></span></span></span></span></eqn></section><p>然后只在保留测试集上比较：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi mathvariant="normal">Δ</mi><mrow><mi mathvariant="normal">t</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">d</mi></mrow></msub><mo>=</mo><mi>A</mi><mo stretchy="false">(</mo><msub><mi>θ</mi><mrow><mi mathvariant="normal">R</mi><mi mathvariant="normal">L</mi></mrow></msub><mo separator="true">,</mo><msub><mover accent="true"><mi>e</mi><mo stretchy="true">^</mo></mover><mrow><mi mathvariant="normal">R</mi><mi mathvariant="normal">L</mi></mrow></msub><mo separator="true">;</mo><msub><mi>D</mi><mrow><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">s</mi><mi mathvariant="normal">t</mi></mrow></msub><mo stretchy="false">)</mo><mo>−</mo><mi>A</mi><mo stretchy="false">(</mo><msub><mi>θ</mi><mn>0</mn></msub><mo separator="true">,</mo><msub><mover accent="true"><mi>e</mi><mo stretchy="true">^</mo></mover><mn>0</mn></msub><mo separator="true">;</mo><msub><mi>D</mi><mrow><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">s</mi><mi mathvariant="normal">t</mi></mrow></msub><mo stretchy="false">)</mo></mrow><annotation encoding="application/x-tex">
+\Delta_{\mathrm{tuned}}
+=A(\theta_{\mathrm{RL}},\widehat e_{\mathrm{RL}};D_{\mathrm{test}})
+-A(\theta_0,\widehat e_0;D_{\mathrm{test}})
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord">Δ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">tuned</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal">A</span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0278em;">θ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3283em;"><span style="top:-2.55em;margin-left:-0.0278em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">RL</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord katex-accent"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.6706em;"><span style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span class="mord mathnormal">e</span></span><span class="svg-align" style="width:calc(100% - 0.1111em);margin-left:0.1111em;top:-3.4306em;"><span class="pstrut" style="height:3em;"></span><span style="height:0.24em;"><svg xmlns="http://www.w3.org/2000/svg" width="100%" height="0.24em" viewBox="0 0 1062 239" preserveAspectRatio="none"><path d="M529 0h5l519 115c5 1 9 5 9 10 0 1-1 2-1 3l-4 22
+c-1 5-5 9-11 9h-2L532 67 19 159h-2c-5 0-9-4-11-9l-5-22c-1-6 2-12 8-13z"/></svg></span></span></span></span></span></span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3283em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">RL</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mpunct">;</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0278em;">D</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:-0.0278em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">test</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mclose">)</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal">A</span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0278em;">θ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:-0.0278em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">0</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord katex-accent"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.6706em;"><span style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span class="mord mathnormal">e</span></span><span class="svg-align" style="width:calc(100% - 0.1111em);margin-left:0.1111em;top:-3.4306em;"><span class="pstrut" style="height:3em;"></span><span style="height:0.24em;"><svg xmlns="http://www.w3.org/2000/svg" width="100%" height="0.24em" viewBox="0 0 1062 239" preserveAspectRatio="none"><path d="M529 0h5l519 115c5 1 9 5 9 10 0 1-1 2-1 3l-4 22
+c-1 5-5 9-11 9h-2L532 67 19 159h-2c-5 0-9-4-11-9l-5-22c-1-6 2-12 8-13z"/></svg></span></span></span></span></span></span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">0</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mpunct">;</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0278em;">D</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:-0.0278em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">test</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mclose">)</span></span></span></span></span></eqn></section><p>这里 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>B</mi></mrow><annotation encoding="application/x-tex">B</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord mathnormal" style="margin-right:0.0502em;">B</span></span></span></span></eq> 为配置搜索预算。这比直接在测试集对两个模型各取最高分更可信，也区分了“权重更新的作用”与“最终系统选择”。</p>
+<p>两种比较都需要报告实际 token、延迟等成本。最大长度相同，实际推理开销仍可能不同。</p>
+<h2 id="section-4">3. 三组有分量的事实，分别能说明什么</h2>
+<h3 id="section-5">3.1 统一复测确实会改变对部分方法的判断</h3>
+<p>A Sober Look 中，Open-RS3 的 AIME'24 原报告为 46.7%，统一重测为 29.7%；R1-Distill-1.5B 基线为 28.7%。由此，原先很醒目的优势在这一复测流程中没有得到支持。</p>
+<p>但该文也报告 DeepScaleR、FastCuRL 等在部分任务上仍保留统计显著收益，v2 中 Nemotron-RR 的改善更稳健。不能只摘录失败案例，再写成“RL 完全没用”。<a href="https://arxiv.org/html/2504.07086v2">来源：Figure 1 与 Table 3</a></p>
+<p>还要区分两个差值：</p>
+<ul>
+<li><eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>46.7</mn><mo>−</mo><mn>29.7</mn><mo>=</mo><mn>17.0</mn></mrow><annotation encoding="application/x-tex">46.7-29.7=17.0</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.7278em;vertical-align:-0.0833em;"></span><span class="mord">46.7</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.6444em;"></span><span class="mord">29.7</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.6444em;"></span><span class="mord">17.0</span></span></span></span></eq> pp 是原报告与复测值的差异。</li>
+<li><eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>29.7</mn><mo>−</mo><mn>28.7</mn><mo>=</mo><mn>1.0</mn></mrow><annotation encoding="application/x-tex">29.7-28.7=1.0</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.7278em;vertical-align:-0.0833em;"></span><span class="mord">29.7</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.6444em;"></span><span class="mord">28.7</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.6444em;"></span><span class="mord">1.0</span></span></span></span></eq> pp 才是这一流程下模型相对基线的均值差。</li>
+</ul>
+<p>前者不能直接称为“RL 效果减少了 17 个百分点”，后者也不能脱离逐题数据和不确定性单独裁定效果。</p>
+<h3 id="section-6">3.2 无信息奖励也能涨分，但现象有模型条件</h3>
+<p>Spurious Rewards v2 的 Figure 1 给出 Qwen2.5-Math-7B 在 MATH-500 上的结果：</p>
+<table>
+<thead>
+<tr>
+<th>条件</th>
+<th style="text-align:right">准确率</th>
+<th style="text-align:right">相对初始值增益</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>未训练</td>
+<td style="text-align:right">49.4%</td>
+<td style="text-align:right">—</td>
+</tr>
+<tr>
+<td>真实奖励</td>
+<td style="text-align:right">78.5%</td>
+<td style="text-align:right">+29.1 pp</td>
+</tr>
+<tr>
+<td>特定错误标签奖励</td>
+<td style="text-align:right">73.5%</td>
+<td style="text-align:right">+24.1 pp</td>
+</tr>
+<tr>
+<td>随机奖励</td>
+<td style="text-align:right">70.8%</td>
+<td style="text-align:right">+21.4 pp</td>
+</tr>
+</tbody>
+</table>
+<p>Post-RL 值由初始值与图中增益相加得到，终值含论文所说明的训练步平滑。随机奖励独立于答案正确性，所以这些结果反驳了“看到涨分，就足以说明正确性监督带来了全部增益”的推断。<a href="https://arxiv.org/html/2506.10947v2">来源：Figure 1 与 Appendix A.6</a></p>
+<p>同时，真实奖励表现更好，同类随机奖励在 Llama、OLMo 等模型上未呈现相同收益。训练仍使用数学问题和预训练模型，因此“奖励无正确性信息”也不能写成“完全没有先验与任务信息”。</p>
+<h3 id="section-7">3.3 更强外部基线提出了疑问，但没自动算出真实训练收益</h3>
+<p>2025 年 Baseline 评论引用以下早期数字：</p>
+<table>
+<thead>
+<tr>
+<th>工作</th>
+<th>起点模型</th>
+<th style="text-align:right">论文 Pre-RL</th>
+<th style="text-align:right">论文 Post-RL</th>
+<th style="text-align:right">外部参考 Pre-RL</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Spurious Rewards</td>
+<td>Qwen2.5-7B</td>
+<td style="text-align:right">41.6</td>
+<td style="text-align:right">70.1</td>
+<td style="text-align:right">64.6</td>
+</tr>
+<tr>
+<td>RL with 1 Example</td>
+<td>R1-Distill-1.5B</td>
+<td style="text-align:right">71.9</td>
+<td style="text-align:right">78.0</td>
+<td style="text-align:right">83.9</td>
+</tr>
+<tr>
+<td>Entropy Minimization</td>
+<td>Qwen2.5-7B</td>
+<td style="text-align:right">43.8</td>
+<td style="text-align:right">70.8</td>
+<td style="text-align:right">64.6</td>
+</tr>
+</tbody>
+</table>
+<p>这些数值足以提示原基线未被充分调用的可能性，但来源协议不同。“Actual Pre-RL”这个原表标签也不代表存在脱离评测条件的唯一准确率。<a href="https://safe-lip-9a8.notion.site/Incorrect-Baseline-Evaluations-Call-into-Question-Recent-LLM-RL-Claims-2012f1fbf0ee8094ab8ded1953c15a37">来源：评论汇总表</a></p>
+<p>例如：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mn>70.1</mn><mo>−</mo><mn>64.6</mn><mo>=</mo><mn>5.5</mn><mtext> pp</mtext></mrow><annotation encoding="application/x-tex">
+70.1-64.6=5.5\text{ pp}
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.7278em;vertical-align:-0.0833em;"></span><span class="mord">70.1</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.6444em;"></span><span class="mord">64.6</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.8389em;vertical-align:-0.1944em;"></span><span class="mord">5.5</span><span class="mord text"><span class="mord"> pp</span></span></span></span></span></span></eqn></section><p>算术成立，但 <strong>5.5 pp 不是已经验证的 RL 真实净增益</strong>。将训练后模型放入新的评测配置，其分数也可能变化。</p>
+<p>在 LessWrong 讨论中，Neel Nanda 明确提出需要把同一评测方法同时用于训练前后模型。作者认可这一限制，并同意将文章理解为“原有证据不足以让人确信结论”。<a href="https://www.lesswrong.com/posts/p8rcMDRwEGeFAzCQS/incorrect-baseline-evalutions-call-into-question-recent-llm">来源：双方原始讨论</a></p>
+<h2 id="section-8">4. 常见说法逐条判定</h2>
+<table>
+<thead>
+<tr>
+<th>说法</th>
+<th>判定</th>
+<th>更准确的表述或所需证据</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RL 后分数提高，说明新增了推理能力</td>
+<td>推断过强</td>
+<td>已证明某配置下表现改善；新增能力还需迁移、预算控制和策略分析</td>
+</tr>
+<tr>
+<td>随机奖励有效，所以奖励正确性不重要</td>
+<td>推断过强</td>
+<td>部分增益可在无正确性奖励下出现；真实奖励仍有额外收益</td>
+</tr>
+<tr>
+<td>格式奖励能涨分，说明所有提升都是 parser 假象</td>
+<td>缺少证据</td>
+<td>格式可能解释部分收益，需重评分、输出审计和行为干预</td>
+</tr>
+<tr>
+<td>外部 Base 分数高于论文 Post-RL，说明训练使模型退化</td>
+<td>不能据此推出</td>
+<td>需要两者在同一协议下的配对比较</td>
+</tr>
+<tr>
+<td>多跑 30 个 seed，就相当于拥有 30 倍测试题</td>
+<td>错误</td>
+<td>重复生成降低解码噪声，不增加不同问题的数量</td>
+</tr>
+<tr>
+<td>两个标准差区间重叠，说明没有显著差异</td>
+<td>错误</td>
+<td>应检验同题配对差值，标准差区间不等于差值置信区间</td>
+</tr>
+<tr>
+<td>输出越长越容易错，所以删短推理能提高能力</td>
+<td>因果推断不足</td>
+<td>题目难度可能同时影响长度和正确性，需要长度干预</td>
+</tr>
+<tr>
+<td>大 k 的 Pass@k 变差，证明了内部能力消失</td>
+<td>推断过强</td>
+<td>支持成功覆盖变化，不能唯一确定内部机制</td>
+</tr>
+<tr>
+<td>这批公开 SFT 模型表现好，说明 SFT 普遍优于 RL</td>
+<td>超出比较范围</td>
+<td>需要对齐基座、数据、预算和目标的受控实验</td>
+</tr>
+<tr>
+<td>未达显著，说明方法无效</td>
+<td>错误</td>
+<td>可能是效应小、样本不足或方差大；证明等效需单独设计</td>
+</tr>
+</tbody>
+</table>
+<p>机制研究可以提出强假说，但每个假说应当对应能够排除竞争解释的实验。</p>
+<h2 id="section-9">5. 三份解读自身也需要核查</h2>
+<h3 id="section-10">5.1 不能混用 Qwen2.5-7B 与 Qwen2.5-Math-7B</h3>
+<p>41.6% 对应普通 Qwen2.5-7B，49.4% 对应 Qwen2.5-Math-7B。它们在 Spurious Rewards v2 Figure 1 中同时出现，是两个模型，不能把初始值和终值交叉相减。</p>
+<p>64.6% 和 64.3% 也应保留各自出处、模型及评测口径，不能看作只差四舍五入的同一结果。</p>
+<h3 id="section-11">5.2 不能把早期评论当成对后续修订版的完整反驳</h3>
+<p>LessWrong 链接帖发布于 2025-05-29；Spurious Rewards 的 arXiv v1 为 2025-06-12，v2 为 2026-02-25。评论原文引用了 GitHub 上的公开材料，因此不应把这个时间顺序当作文章不存在的证据。</p>
+<p>同样，早期引用的 70.1% 不能不加版本说明就替代 v2 中的结果，也不能说该评论已经检验了 v2 新增的全部分析。<a href="https://safe-lip-9a8.notion.site/Incorrect-Baseline-Evaluations-Call-into-Question-Recent-LLM-RL-Claims-2012f1fbf0ee8094ab8ded1953c15a37">来源：评论原文</a>、<a href="https://www.lesswrong.com/posts/p8rcMDRwEGeFAzCQS/incorrect-baseline-evalutions-call-into-question-recent-llm">LessWrong 日期</a>、<a href="https://arxiv.org/abs/2506.10947">arXiv 版本记录</a></p>
+<h3 id="section-12">5.3 Spurious Rewards v2 中确实有一处数字不一致</h3>
+<p>v2 引言写 Qwen2.5-Math-7B 含代码回答准确率为 60.9%，无代码为 28.0%；Table 1 将无代码准确率写为 35.0%，并报告代码占比 65.0%。</p>
+<p>假设这些数字来自同一批被划分为两类的输出，按 Table 1 加权：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mn>0.65</mn><mo>×</mo><mn>60.9</mn><mi mathvariant="normal">%</mi><mo>+</mo><mn>0.35</mn><mo>×</mo><mn>35.0</mn><mi mathvariant="normal">%</mi><mo>=</mo><mn>51.835</mn><mi mathvariant="normal">%</mi></mrow><annotation encoding="application/x-tex">
+0.65\times60.9\%+0.35\times35.0\%=51.835\%
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.7278em;vertical-align:-0.0833em;"></span><span class="mord">0.65</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">×</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.0833em;"></span><span class="mord">60.9%</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.7278em;vertical-align:-0.0833em;"></span><span class="mord">0.35</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">×</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.8056em;vertical-align:-0.0556em;"></span><span class="mord">35.0%</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.8056em;vertical-align:-0.0556em;"></span><span class="mord">51.835%</span></span></span></span></span></eqn></section><p>与 49.4% 初始准确率不符；改用引言中的 28.0% 得到：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mn>0.65</mn><mo>×</mo><mn>60.9</mn><mi mathvariant="normal">%</mi><mo>+</mo><mn>0.35</mn><mo>×</mo><mn>28.0</mn><mi mathvariant="normal">%</mi><mo>=</mo><mn>49.385</mn><mi mathvariant="normal">%</mi><mo>≈</mo><mn>49.4</mn><mi mathvariant="normal">%</mi></mrow><annotation encoding="application/x-tex">
+0.65\times60.9\%+0.35\times28.0\%=49.385\%\approx49.4\%
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.7278em;vertical-align:-0.0833em;"></span><span class="mord">0.65</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">×</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.0833em;"></span><span class="mord">60.9%</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.7278em;vertical-align:-0.0833em;"></span><span class="mord">0.35</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">×</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.8056em;vertical-align:-0.0556em;"></span><span class="mord">28.0%</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.8056em;vertical-align:-0.0556em;"></span><span class="mord">49.385%</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">≈</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.8056em;vertical-align:-0.0556em;"></span><span class="mord">49.4%</span></span></span></span></span></eqn></section><p>**可以确认文字与表格有冲突；不能据此确认冲突的原因。**可能是笔误，也可能是未解释的统计口径差异。需要原始逐样本输出才能进一步判断，本文不将 35.0% 静默改为 28.0%。<a href="https://arxiv.org/html/2506.10947v2">来源：v2 引言与 Table 1</a></p>
+<h3 id="section-13">5.4 “所有收益都是格式”也受到原文数据约束</h3>
+<p>Spurious Rewards Appendix I 的 Sober prompt 可解析率为 93.1%、准确率为 61.6%；Lorem Ipsum prompt 可解析率为 84.1%、准确率为 68.8%。最高解析率并不对应最高正确率。</p>
+<p>这不足以排除全部 parser 问题，但已经说明仅凭解析率无法解释这些配置间的所有准确率差异。<a href="https://arxiv.org/html/2506.10947v2">来源：Table 5</a></p>
+<h3 id="section-14">5.5 随机奖励梯度公式要写清条件</h3>
+<p>理想 policy gradient 在独立随机奖励下期望为零，与 GRPO 的 clipping 偏置可以同时成立：两者讨论的优化目标与条件不同。</p>
+<p>在固定当前策略的局部推导中，<eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>ρ</mi><mo>=</mo><mn>1</mn></mrow><annotation encoding="application/x-tex">\rho=1</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.625em;vertical-align:-0.1944em;"></span><span class="mord mathnormal">ρ</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.6444em;"></span><span class="mord">1</span></span></span></span></eq> 时 clipping 不触发，偏置也为零；有限样本移动和后续重复更新才可能使 ratio 越界。还需注意：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi mathvariant="normal">∇</mi><mi>θ</mi></msub><mi>ρ</mi><mo>=</mo><mi>ρ</mi><msub><mi mathvariant="normal">∇</mi><mi>θ</mi></msub><mi>log</mi><mo>⁡</mo><msub><mi>π</mi><mi>θ</mi></msub></mrow><annotation encoding="application/x-tex">
+\nabla_\theta\rho=\rho\nabla_\theta\log\pi_\theta
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8778em;vertical-align:-0.1944em;"></span><span class="mord"><span class="mord">∇</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0278em;">θ</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mord mathnormal">ρ</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.8889em;vertical-align:-0.1944em;"></span><span class="mord mathnormal">ρ</span><span class="mord"><span class="mord">∇</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0278em;">θ</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mop">lo<span style="margin-right:0.0139em;">g</span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0359em;">π</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:-0.0359em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0278em;">θ</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span></span></eqn></section><p>将 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi mathvariant="normal">∇</mi><mi>ρ</mi></mrow><annotation encoding="application/x-tex">\nabla\rho</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8778em;vertical-align:-0.1944em;"></span><span class="mord">∇</span><span class="mord mathnormal">ρ</span></span></span></span></eq> 改写成 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi mathvariant="normal">∇</mi><mi>log</mi><mo>⁡</mo><mi>π</mi></mrow><annotation encoding="application/x-tex">\nabla\log\pi</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8889em;vertical-align:-0.1944em;"></span><span class="mord">∇</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mop">lo<span style="margin-right:0.0139em;">g</span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal" style="margin-right:0.0359em;">π</span></span></span></span></eq> 时不能无条件遗漏 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>ρ</mi></mrow><annotation encoding="application/x-tex">\rho</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.625em;vertical-align:-0.1944em;"></span><span class="mord mathnormal">ρ</span></span></span></span></eq>。高概率 token 的边界例子也不能替代完整神经网络训练动态的证明。</p>
+<h2 id="section-15">6. 一项可信的复核至少怎样做</h2>
+<p>以下是基于三份材料归纳的复核方案，不是声称三篇作者已经共同执行了全部步骤。</p>
+<h3 id="section-16">第一步：锁定模型、数据和主张</h3>
+<p>记录模型完整名称、revision、参数规模、Base/Instruct/Distill 身份、论文版本和 benchmark 切分。先明确要核查的是准确率、效率、泛化、奖励机制，还是新能力。</p>
+<p>如果训练前后起点模型本身不同，优先解决身份问题，再讨论百分点。</p>
+<h3 id="section-17">第二步：建立无需训练的强基线</h3>
+<p>保留默认配置，同时在验证集上，以相同搜索预算测试合理的 prompt、chat template、temperature、top-p 和输出预算。检查是否允许 few-shot，明确它与 zero-shot 对照的成本差异。</p>
+<p>不能故意给基线使用不适合的配置，也不能用无限搜索的基线对比未经调参的方法。</p>
+<h3 id="section-18">第三步：同时重测训练前后模型</h3>
+<p>对每个候选协议，比较：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mi>A</mi><mo stretchy="false">(</mo><msub><mi>θ</mi><mn>0</mn></msub><mo separator="true">,</mo><mi>e</mi><mo stretchy="false">)</mo><mo separator="true">,</mo><mspace width="2em"/><mi>A</mi><mo stretchy="false">(</mo><msub><mi>θ</mi><mrow><mi mathvariant="normal">R</mi><mi mathvariant="normal">L</mi></mrow></msub><mo separator="true">,</mo><mi>e</mi><mo stretchy="false">)</mo></mrow><annotation encoding="application/x-tex">
+A(\theta_0,e),\qquad A(\theta_{\mathrm{RL}},e)
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal">A</span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0278em;">θ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:-0.0278em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">0</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal">e</span><span class="mclose">)</span><span class="mpunct">,</span><span class="mspace" style="margin-right:2em;"></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal">A</span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0278em;">θ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3283em;"><span style="top:-2.55em;margin-left:-0.0278em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">RL</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal">e</span><span class="mclose">)</span></span></span></span></span></eqn></section><p>保留逐题答案、提取结果、正确性标签、token 数、截断状态和生成配置。Parser 改动需要同时重评分两类模型的输出，抽样检查误判，并避免根据模型身份调整标准。</p>
+<h3 id="section-19">第四步：把统计单位说清楚</h3>
+<p>对相同题目做 paired bootstrap 等配对分析；单次二值结果可考虑 McNemar test。多次生成时，需要保留“题目—生成”的层级，避免把高度相关的重复样本当作新增独立题目。</p>
+<p>还应区分评测随机种子与训练随机种子。多次评测同一个 checkpoint 主要测量解码波动，不能证明算法跨训练运行稳定。</p>
+<p>报告效应量和差值置信区间，明确多重比较处理。Greedy decoding 下反复换 seed，也不自动提供独立的解码采样证据。</p>
+<h3 id="section-20">第五步：按主张选择对照</h3>
+<table>
+<thead>
+<tr>
+<th>待验证主张</th>
+<th>有辨别力的对照</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>新奖励里的正确性信息有效</td>
+<td>随机奖励、格式奖励、真实奖励，以及跨 backbone 对照</td>
+</tr>
+<tr>
+<td>训练带来超出配置调优的收益</td>
+<td>不更新权重的 prompt/decoding 调优</td>
+</tr>
+<tr>
+<td>出现新的成功策略</td>
+<td>训练前充分采样、轨迹分析、策略诱导与抑制干预</td>
+</tr>
+<tr>
+<td>具有泛化收益</td>
+<td>未用于调参的新任务、变体和分布变化</td>
+</tr>
+<tr>
+<td>成本更低</td>
+<td>相近准确率下的实际 token、延迟、训练与搜索成本</td>
+</tr>
+</tbody>
+</table>
+<p>有限次采样中没观察到某策略，不能证明训练前模型的成功概率严格为零；“新能力”需要可操作的定义和更强证据。</p>
+<h2 id="section-21">7. 对具身 Agent / VLA，应该核查哪些类似问题</h2>
+<p>具身成功率可概念性地写成：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi>S</mi><mrow><mi mathvariant="normal">o</mi><mi mathvariant="normal">b</mi><mi mathvariant="normal">s</mi></mrow></msub><mo>=</mo><mi>f</mi><mo stretchy="false">(</mo><mi>π</mi><mo separator="true">,</mo><mtext>初始状态</mtext><mo separator="true">,</mo><mtext>任务分布</mtext><mo separator="true">,</mo><mtext>环境</mtext><mo separator="true">,</mo><mtext>控制接口</mtext><mo separator="true">,</mo><mtext>执行预算</mtext><mo separator="true">,</mo><mtext>成功判定</mtext><mo stretchy="false">)</mo></mrow><annotation encoding="application/x-tex">
+S_{\mathrm{obs}}=f(\pi,\text{初始状态},\text{任务分布},
+\text{环境},\text{控制接口},\text{执行预算},\text{成功判定})
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0576em;">S</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:-0.0576em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">obs</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal" style="margin-right:0.1076em;">f</span><span class="mopen">(</span><span class="mord mathnormal" style="margin-right:0.0359em;">π</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord text"><span class="mord cjk_fallback">初始状态</span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord text"><span class="mord cjk_fallback">任务分布</span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord text"><span class="mord cjk_fallback">环境</span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord text"><span class="mord cjk_fallback">控制接口</span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord text"><span class="mord cjk_fallback">执行预算</span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord text"><span class="mord cjk_fallback">成功判定</span></span><span class="mclose">)</span></span></span></span></span></eqn></section><p>这个表达用于组织实验因素，不是已识别的因果分解。LLM 数学结果也没有证明随机奖励适用于机器人。</p>
+<table>
+<thead>
+<tr>
+<th>LLM 评测中的问题</th>
+<th>具身评测中的对应检查</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Prompt 和 chat template</td>
+<td>任务指令、观测组织、相机与历史输入</td>
+</tr>
+<tr>
+<td>Temperature 和随机采样</td>
+<td>策略采样、环境 seed、物理扰动</td>
+</tr>
+<tr>
+<td>输出长度</td>
+<td>动作步数、episode 时长、重试次数</td>
+</tr>
+<tr>
+<td>Parser / grader</td>
+<td>success checker、接触和姿态阈值、终止逻辑</td>
+</tr>
+<tr>
+<td>推理后端与数值差异</td>
+<td>仿真版本、求解器、控制频率、延迟与动作执行</td>
+</tr>
+<tr>
+<td>格式改善</td>
+<td>动作合法率、工具调用格式和控制接口匹配</td>
+</tr>
+<tr>
+<td>既有策略重加权</td>
+<td>更常选择已有的 grasp、approach 或 recovery 模式</td>
+</tr>
+</tbody>
+</table>
+<p>有实际研究价值的复核可以按以下顺序展开：</p>
+<ol>
+<li>固定任务版本、控制接口、执行预算和 success checker，对照相同 initial states。</li>
+<li>同时记录成功率、完成时间、动作数、碰撞和人工干预。</li>
+<li>主动制造可恢复失败，在可比的恢复机会中比较 recovery rate。</li>
+<li>在新布局、新对象和扰动下检查结论是否保留。</li>
+<li>如果排行榜改变，逐因素干预定位原因，避免止步于重新排序。</li>
+</ol>
+<p>例如，某方法训练后 Success Rate 提高，但允许的重试次数也更多，需要先比较相同重试预算下的表现。若主张恢复能力增强，则应比较匹配的失败起点和恢复机会，而不只统计自然 rollout 中成功恢复的次数。</p>
+<h2 id="section-22">8. 怎样写出与证据强度匹配的研究结论</h2>
+<table>
+<thead>
+<tr>
+<th>已有证据</th>
+<th>合理的结论</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>一个 benchmark、一个协议下准确率提高</td>
+<td>方法在该设置中改善了表现</td>
+</tr>
+<tr>
+<td>相同条件、多种合理配置下都改善</td>
+<td>训练收益对这些评测选择较稳健</td>
+</tr>
+<tr>
+<td>超过无训练调优和奖励对照</td>
+<td>收益难以完全由这些替代解释说明</td>
+</tr>
+<tr>
+<td>在新分布和匹配成本下仍有收益</td>
+<td>泛化或效率主张得到额外支持</td>
+</tr>
+<tr>
+<td>有主动策略干预及逐样本证据</td>
+<td>某种机制解释得到更强支持，仍需说明未排除的机制</td>
+</tr>
+</tbody>
+</table>
+<p>对这组三份材料，最稳妥的判断是：部分早期推理进展被评测差异与基线选择放大；部分分数提升可以由既有行为的调用变化产生；也存在统一复测后仍保留的真实收益。后续研究需要把这些成分分开测量，并公开足够的逐样本证据。</p>
+<footer><a href="../index.html#notes">← All notes</a></footer></article></main></body></html>

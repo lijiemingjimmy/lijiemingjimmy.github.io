@@ -1,0 +1,48 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>How Far Is Video Generation from World Model 论文解读：用物理外推检验世界模型 · Jieming Li</title><link rel="stylesheet" href="../assets/styles.css"><link rel="stylesheet" href="../assets/notes.css"><link rel="stylesheet" href="vendor/katex/katex.min.css"></head><body class="note-page"><header class="note-nav"><a href="../index.html#notes">← Notes</a><a href="../index.html">Jieming Li</a></header><main class="note-layout"><aside class="note-outline"><p class="eyebrow">On this page</p><nav aria-label="目录"><ol><li><a href="#section-0">一、研究问题：逼真不等于规律外推</a></li><li><a href="#section-1">二、实验设计：把视觉生成放进可验证的物理环境</a></li><li><a href="#section-2">三、主要发现：三种泛化有不同的扩展行为</a></li><li><a href="#section-3">四、与 RLVR 能力边界研究的联系</a></li><li><a href="#section-4">五、对具身智能评测的启发</a></li></ol></nav></aside><article class="note-content" id="content"><p class="eyebrow">Research notebook · 研究笔记</p><h1 id="noteTitle">How Far Is Video Generation from World Model 论文解读：用物理外推检验世界模型</h1>
+<p><strong>论文：</strong> How Far Is Video Generation from World Model: A Physical Law Perspective<br>
+<strong>作者：</strong> 康炳易（Bingyi Kang）、乐洋（Yang Yue）、Rui Lu 等<br>
+<strong>发表：</strong> ICML 2025；预印本最初发布于 2024 年 11 月<br>
+<strong>资源：</strong> <a href="https://proceedings.mlr.press/v267/kang25g.html">会议论文</a> · <a href="https://arxiv.org/abs/2411.02385">arXiv</a> · <a href="https://arxiv.org/pdf/2411.02385">PDF</a> · <a href="https://phyworld.github.io/">项目主页</a></p>
+<p><strong>一句话概括：作者用可控二维物理环境区分“生成看起来合理的视频”与“能够外推物理规律”，将世界模型能力转化为可量化的泛化问题。</strong></p>
+<h2 id="section-0">一、研究问题：逼真不等于规律外推</h2>
+<p>视频模型可能在熟悉场景中生成合理运动，但学习到物理规律意味着：即使速度、初始状态或因素组合发生变化，也能继续预测满足规律的未来。</p>
+<p>论文因此评价三种泛化情形：</p>
+<table>
+<thead>
+<tr>
+<th>情形</th>
+<th>检验的问题</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>In-distribution</td>
+<td>对训练分布内的新样本能否正确预测</td>
+</tr>
+<tr>
+<td>Out-of-distribution</td>
+<td>对超出训练范围的物理条件能否外推</td>
+</tr>
+<tr>
+<td>Combinatorial Generalization</td>
+<td>对已见因素的新组合能否泛化</td>
+</tr>
+</tbody>
+</table>
+<p>这些情形需要分别报告，平均视频质量无法替代它们。<a href="https://proceedings.mlr.press/v267/kang25g.html">来源：会议论文</a></p>
+<h2 id="section-1">二、实验设计：把视觉生成放进可验证的物理环境</h2>
+<p>作者构建二维仿真环境，生成受经典力学支配的运动和碰撞视频，包括匀速运动、抛物线运动及物体碰撞。模型根据初始画面预测后续视频。</p>
+<p>这种设计的优势是，运动规律、初态与数据分布可以受控变化，生成结果能够与物理真值比较。研究重点落在扩大数据和模型规模后，三类泛化分别怎样变化。<a href="https://phyworld.github.io/">来源：项目主页</a></p>
+<h2 id="section-2">三、主要发现：三种泛化有不同的扩展行为</h2>
+<p>实验中，模型能很好地学习分布内运动，组合泛化也呈现随规模改善的行为，但分布外物理条件的外推仍有明显困难。</p>
+<p>作者进一步观察到，模型呈现基于相似案例的泛化倾向：更像是在参考相近训练样本，而不是抽象出可以统一应用的物理规则。研究还发现，外观和运动因素对这种匹配的影响不同。<a href="https://arxiv.org/abs/2411.02385">来源：论文</a></p>
+<p>这项结果针对作者训练的受控视频生成模型。Sora 是研究动机的一部分，论文没有直接评价 Sora 内部模型。</p>
+<h2 id="section-3">四、与 RLVR 能力边界研究的联系</h2>
+<p>它与 <a href="Limit-of-RLVR.html">Limit of RLVR</a> 共享一种研究方法：先区分在已有分布上表现更好，与获得能够迁移到新条件的能力，再设计实验分离二者。</p>
+<p>一个模型能够生成更多逼真视频，不自动意味着它能覆盖更多物理条件；同样，推理模型单次准确率提高，也不自动意味着它能解决更多类型的问题。</p>
+<h2 id="section-4">五、对具身智能评测的启发</h2>
+<p>以下是应用推论。</p>
+<p>如果机器人使用视频世界模型规划，评测应包含初态变化、物体属性变化和任务因素重组，并分别检查预测误差如何影响动作选择与最终成功率。</p>
+<p>尤其需要区分：模型生成的未来在视觉上是否合理，模型是否正确预测接触和状态变化，以及基于该预测制定的计划是否有效。</p>
+<p>这篇论文提供的直接方法，是用可控环境和可计算真值，把“理解物理”转化为清晰的外推检验。</p>
+<footer><a href="../index.html#notes">← All notes</a></footer></article></main></body></html>

@@ -1,0 +1,118 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Mimir：记忆不只保存过去，还要支持下一步行动 · Jieming Li</title><link rel="stylesheet" href="../assets/styles.css"><link rel="stylesheet" href="../assets/notes.css"><link rel="stylesheet" href="vendor/katex/katex.min.css"></head><body class="note-page"><header class="note-nav"><a href="../index.html#notes">← Notes</a><a href="../index.html">Jieming Li</a></header><main class="note-layout"><aside class="note-outline"><p class="eyebrow">On this page</p><nav aria-label="目录"><ol><li><a href="#section-0">1. 为什么记得发生过什么，还会继续做错</a></li><li><a href="#section-1">2. World Memory：物体在哪里，依据是什么</a></li><li><a href="#section-2">3. Task Memory：目标是否真正完成</a></li><li><a href="#section-3">4. Dynamic Grounding：从候选记忆到可执行目标</a></li><li><a href="#section-4">5. 记忆如何进入执行闭环</a></li><li><a href="#section-5">6. 实验数字要按统计口径读</a></li><li><a href="#section-6">7. 对长程机器人 Agent 的启发</a></li></ol></nav></aside><article class="note-content" id="content"><p class="eyebrow">Research notebook · 研究笔记</p><h1 id="noteTitle">Mimir：记忆不只保存过去，还要支持下一步行动</h1>
+<p>机器人刚把杯子从桌上拿走，相机随后转向柜子。接下来，它需要知道的不只是“之前看见过一个杯子”，还包括杯子现在是否拿在手里、放置任务有没有完成，以及哪些寻找位置已经被证明不对。</p>
+<p>Mimir 把这些信息显式分成 World Memory 和 Task Memory，再用 Dynamic Grounding 把当前目标绑定到世界中的具体对象。<strong>它关心的是行动所需的状态管理，而不只是保存更长的历史。</strong></p>
+<p>论文：<a href="https://arxiv.org/abs/2608.04933">Mimir: A Neuro-Symbolic Memory System with Dynamic Grounding for Embodied Agents in Interactive Environments</a>。本笔记依据提供的解读，并对照论文 v1 核查任务记忆定义、完成条件和实验统计口径。</p>
+<h2 id="section-0">1. 为什么记得发生过什么，还会继续做错</h2>
+<p>完整历史里可能同时存在“杯子在桌上”“已经拿起杯子”“准备放进柜子”三种信息。模型每次重新读历史，需要区分过去状态、当前状态和未来意图。</p>
+<p>长任务中，这种隐式重建容易导致重复执行已完成步骤、忘记前置条件，或反复去已经找错的位置。简单增加上下文长度，并不会自动解决这些状态更新问题。</p>
+<p>Mimir 将记忆写为：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi>M</mi><mi>t</mi></msub><mo>=</mo><mo stretchy="false">(</mo><msub><mi>T</mi><mi>t</mi></msub><mo separator="true">,</mo><msub><mi>W</mi><mi>t</mi></msub><mo stretchy="false">)</mo><mo separator="true">,</mo></mrow><annotation encoding="application/x-tex">
+M_t=(T_t,W_t),
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.109em;">M</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:-0.109em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1389em;">T</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:-0.1389em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1389em;">W</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:-0.1389em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mclose">)</span><span class="mpunct">,</span></span></span></span></span></eqn></section><p>其中 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>T</mi><mi>t</mi></msub></mrow><annotation encoding="application/x-tex">T_t</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1389em;">T</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:-0.1389em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span></eq> 管理任务执行，<eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>W</mi><mi>t</mi></msub></mrow><annotation encoding="application/x-tex">W_t</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1389em;">W</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:-0.1389em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span></eq> 管理世界实体与关系。两者分开更新，再通过当前目标连接。</p>
+<h2 id="section-1">2. World Memory：物体在哪里，依据是什么</h2>
+<p>World Memory 使用树形关系表达场景实体及其当前归属，例如房间、桌面、容器与手持状态。下面只是概念示意：</p>
+<pre><code class="language-text">厨房
+└─ 桌子
+   └─ 红杯子
+      └─ 证据：先前视觉观察
+
+抓取效果得到确认后：
+机器人手部
+└─ 红杯子
+   └─ 证据：抓取后的执行反馈
+</code></pre>
+<p>杯子离开视野，不意味着它从记忆中消失；发出抓取命令，也不意味着它已经移动到手里。更新需要由观察或执行效果支持。</p>
+<p>因此，这份记忆是系统维护的场景判断，而不是全知的真实地图。证据过时、实体识别错误，都可能让记忆偏离现实。树形结构帮助组织信息，却不能替代感知本身。</p>
+<h2 id="section-2">3. Task Memory：目标是否真正完成</h2>
+<p>论文定义：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi>T</mi><mi>t</mi></msub><mo>=</mo><mo stretchy="false">(</mo><mi mathvariant="script">G</mi><mo separator="true">,</mo><mo>⪯</mo><mo separator="true">,</mo><msub><mi>s</mi><mi>t</mi></msub><mo separator="true">,</mo><msub><mi>h</mi><mi>t</mi></msub><mo separator="true">,</mo><msub><mi>F</mi><mi>t</mi></msub><mo separator="true">,</mo><msub><mi>C</mi><mi>t</mi></msub><mo stretchy="false">)</mo><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+T_t=(\mathcal G,\preceq,s_t,h_t,F_t,C_t).
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1389em;">T</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:-0.1389em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mopen">(</span><span class="mord mathcal" style="margin-right:0.0593em;">G</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">⪯</span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal">s</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal">h</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1389em;">F</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:-0.1389em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0715em;">C</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:-0.0715em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mclose">)</span><span class="mord">.</span></span></span></span></span></eqn></section><table>
+<thead>
+<tr>
+<th>字段</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi mathvariant="script">G</mi><mo separator="true">,</mo><mo>⪯</mo></mrow><annotation encoding="application/x-tex">\mathcal G,\preceq</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8778em;vertical-align:-0.1944em;"></span><span class="mord mathcal" style="margin-right:0.0593em;">G</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">⪯</span></span></span></span></eq></td>
+<td>子目标与执行次序</td>
+</tr>
+<tr>
+<td><eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>s</mi><mi>t</mi></msub></mrow><annotation encoding="application/x-tex">s_t</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.5806em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal">s</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span></eq></td>
+<td>pending、completed 或 blocked</td>
+</tr>
+<tr>
+<td><eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>h</mi><mi>t</mi></msub></mrow><annotation encoding="application/x-tex">h_t</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8444em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal">h</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span></eq></td>
+<td>当前手持状态</td>
+</tr>
+<tr>
+<td><eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>F</mi><mi>t</mi></msub></mrow><annotation encoding="application/x-tex">F_t</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1389em;">F</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:-0.1389em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span></eq></td>
+<td>被反馈否定的对象—来源位置假设</td>
+</tr>
+<tr>
+<td><eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>C</mi><mi>t</mi></msub></mrow><annotation encoding="application/x-tex">C_t</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0715em;">C</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:-0.0715em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span></eq></td>
+<td>支持目标已完成的证据</td>
+</tr>
+</tbody>
+</table>
+<p>这里需要修正附件的一处表述：<strong>原文的 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>C</mi><mi>t</mi></msub></mrow><annotation encoding="application/x-tex">C_t</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0715em;">C</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:-0.0715em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span></eq> 是完成证据，不宜直接解释为约束集合。</strong> 系统确实处理执行约束，但不能因此改变这个符号的含义。<a href="https://arxiv.org/html/2608.04933v1">任务记忆定义</a></p>
+<p>尤其重要的是，动作接口返回 success，不等于当前子目标完成。导航到柜子成功，只说明导航动作成功；“把杯子放进柜子”仍需要相应的物体关系变化。</p>
+<p>论文使用后置条件判断完成：只有执行反馈支持目标要求的状态变化，才将目标标为 completed。这使计划进度与实际效果联系起来，而不是根据“已经调用过接口”推进。</p>
+<h2 id="section-3">4. Dynamic Grounding：从候选记忆到可执行目标</h2>
+<p>假设当前目标是把红杯子放进柜子。记忆中可能有两个红杯子，其中一个以前出现在桌上，另一个在架子上。此时“找到了含有 red cup 的历史文本”还不够。</p>
+<p>Mimir 将过程分为两步：</p>
+<ol>
+<li><strong>Recall</strong>：根据当前目标，检索相关实体、来源关系和证据，保留候选。</li>
+<li><strong>Grounding</strong>：结合当前观察、目标限制与失败记录，选择有依据的具体绑定，补足所需来源信息。</li>
+</ol>
+<p>选择结果不仅包含物体名称，还包含当前要操作的实体、来源、目的地和依据。没有合法且有证据支持的绑定时，系统转入探索或失败处理，而不把一个猜测位置直接交给执行模块。</p>
+<p>这也是失败记忆的作用：如果“红杯子在桌上”已经被新的交互否定，下一次不能只因同一条旧记录仍然存在，就重复采用这个绑定。</p>
+<h2 id="section-4">5. 记忆如何进入执行闭环</h2>
+<p>整体过程可以理解为：</p>
+<p><strong>观察更新世界 → 选择未完成目标 → 检索并绑定实体 → 规划抽象动作 → Embodiment Adapter 转成合法动作 → 执行反馈更新两种记忆。</strong></p>
+<p>Adapter 让上层计划和具体环境动作接口分离，但这不意味着一个规划器已经能无修改地控制所有机器人。动作语义、前置条件和反馈字段仍需要适配。</p>
+<p>对真机而言，最值得注意的是反馈接口。例如抓取接口返回“运动完成”，不一定表示“物体抓取成功”。如果高层把这两种状态混淆，再清楚的记忆结构也会写入错误事实。</p>
+<h2 id="section-5">6. 实验数字要按统计口径读</h2>
+<p>下表是 Qwen3-VL-8B 在四类任务平均设置下的成功率：</p>
+<table>
+<thead>
+<tr>
+<th>设置</th>
+<th style="text-align:right">EB-ALFRED</th>
+<th style="text-align:right">EB-Habitat</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>原始骨干</td>
+<td style="text-align:right">26.5%</td>
+<td style="text-align:right">28.5%</td>
+</tr>
+<tr>
+<td>加入 Mimir</td>
+<td style="text-align:right">57.0%</td>
+<td style="text-align:right">65.0%</td>
+</tr>
+<tr>
+<td>移除 World Memory</td>
+<td style="text-align:right">52.0%</td>
+<td style="text-align:right">12.5%</td>
+</tr>
+<tr>
+<td>移除 Task Memory</td>
+<td style="text-align:right">34.0%</td>
+<td style="text-align:right">54.0%</td>
+</tr>
+</tbody>
+</table>
+<p>这里的四类任务是 Base、Common-sense、Complex-instruction 和 Long-horizon。EB-Habitat 对 World Memory 的移除更敏感，EB-ALFRED 则更受 Task Memory 移除影响，说明不同任务的状态管理瓶颈不同。<a href="https://arxiv.org/html/2608.04933v1">主表与消融</a></p>
+<p>另外两组比较不能与此表直接混用：Qwen3-VL-32B 的 86.0% 是 EB-Habitat Long-horizon 子集结果；与 RoboMemory 的 90.0% 对 74.0% 使用 Qwen2.5-VL-72B，只平均 Base 和 Long-horizon。它们对应不同骨干和任务范围。</p>
+<p>这些结果支持显式记忆在所测环境中的作用，但不直接证明底层抓取、接触控制或真机安全性得到改善。</p>
+<h2 id="section-6">7. 对长程机器人 Agent 的启发</h2>
+<p>这篇最值得借鉴的接口是：世界记忆说明“现在相信什么”，任务记忆说明“还有什么没完成”，grounding 说明“当前行动依据哪条世界证据”。这样失败时可以定位问题，而不是只看到一段越来越长的历史。</p>
+<p>作为后续研究，可以固定骨干和调用预算，对比完整历史、结构化记忆、以及结构化记忆加失败绑定过滤。还可以人为移动已记住的物体，检查系统能否纠正旧位置，而不是持续重试。</p>
+<p>这些是建议的实验。Mimir 主要处理单个 episode 内的状态维护，不等于跨 episode 学会新技能；它也无法恢复从未观察到的事实，或替含糊指令决定唯一正确对象。</p>
+<p>与 <a href="PriorMaskMap.html">PriorMaskMap</a> 联系起来看，一个共同问题是历史信息什么时候值得相信；与 <a href="Move-Then-Operate.html">Move-Then-Operate</a> 联系起来，上层记忆可以确定当前目标，下层专家可以执行动作。但连接两者时，仍要验证“动作结果如何变成可信的任务完成证据”，不能把这种组合设想写成已经验证的统一系统。</p>
+<footer><a href="../index.html#notes">← All notes</a></footer></article></main></body></html>

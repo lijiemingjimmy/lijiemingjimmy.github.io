@@ -1,0 +1,148 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PhysWord：给物理经验一个可以复用的动作词 · Jieming Li</title><link rel="stylesheet" href="../assets/styles.css"><link rel="stylesheet" href="../assets/notes.css"><link rel="stylesheet" href="vendor/katex/katex.min.css"></head><body class="note-page"><header class="note-nav"><a href="../index.html#notes">← Notes</a><a href="../index.html">Jieming Li</a></header><main class="note-layout"><aside class="note-outline"><p class="eyebrow">On this page</p><nav aria-label="目录"><ol><li><a href="#section-0">1. 为什么要给物理经验“词汇”？</a></li><li><a href="#section-1">2. Physical Word 不是一个固定的技能向量</a></li><li><a href="#section-2">3. 从预测动作词到输出机器人动作</a></li><li><a href="#section-3">4. 实验结果要分开读</a></li><li><a href="#section-4">5. 不用实时触觉，到底是什么意思？</a></li><li><a href="#section-5">6. 为什么它适合讨论“大小脑接口”？</a></li><li><a href="#section-6">7. 对 WAM 研究的启发</a></li></ol></nav></aside><article class="note-content" id="content"><p class="eyebrow">Research notebook · 研究笔记</p><h1 id="noteTitle">PhysWord：给物理经验一个可以复用的动作词</h1>
+<p>“pick”可以告诉机器人下一步要抓取，但没有说清楚物体会怎样移动、手指怎样接触、抓取后是否容易滑落。直接预测连续的视觉和触觉特征，又缺少一种清楚的方式，把不同场景里的“抓取经验”组织到一起。</p>
+<p><strong>PhysWord 的想法，是用动作词组织物理预测：语义负责说明正在做什么，连续 hidden state 负责承载这一次操作的具体动态。</strong></p>
+<p>论文：<em>Physical Words: A Vocabulary for Structuring Latent Reasoning in Robot Manipulation</em>，NVIDIA、北京大学与 UC Berkeley 合作，2026 年 10 月。本文结合所提供的介绍，核对论文 v3 的方法与实验。<a href="https://arxiv.org/abs/2610.26854">论文</a>｜<a href="https://nvidia-isaac.github.io/video_to_data/physicalword/">项目与演示</a></p>
+<h2 id="section-0">1. 为什么要给物理经验“词汇”？</h2>
+<p>语言适合组织任务，因为相同的词可以出现在不同对象、场景和操作序列中。“抓起来，再放进去”不需要为每个杯子重新发明一种表达。</p>
+<p>但执行时，抓杯子、抓薄纸和抓羽毛球需要的接触方式显然不同。只保留“抓取”这个类别，会丢失控制需要的细节。</p>
+<p>PhysWord 希望同时保留两层信息：</p>
+<table>
+<thead>
+<tr>
+<th>层次</th>
+<th>想表达什么</th>
+<th>以抓取为例</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>共享动作语义</td>
+<td>这是一种什么操作</td>
+<td>当前阶段是 pick</td>
+</tr>
+<tr>
+<td>当前情境中的动态</td>
+<td>接下来可能怎样变化</td>
+<td>当前物体的运动与接触变化</td>
+</tr>
+</tbody>
+</table>
+<p>因此，“复用同一个词”不意味着复用一段完全相同的动作轨迹。更有价值的是：在不同条件下，仍能用同一语义组织对应的物理预测。</p>
+<h2 id="section-1">2. Physical Word 不是一个固定的技能向量</h2>
+<p>需要区分词表里的 embedding 和结合当前观测生成的 contextual hidden state。固定的词名提供共享语义，随场景变化的 hidden state 才能表达“这一次抓取”的细节。</p>
+<p>原论文还做了一个关键处理：<strong>同一动作具有独立的视觉、触觉变体，例如 pick_v 与 pick_t。</strong> 两者共享语义初始化，但分别对齐未来视觉与触觉 latent；纯视觉任务省略触觉变体。每个变体的 hidden state 同时接受动作标签交叉熵和未来 latent 的余弦对齐监督。<a href="https://arxiv.org/html/2610.26854v3#S3.SS3">论文 §3.3</a></p>
+<p>用简化记号，可以把这个局部监督理解为：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi mathvariant="script">L</mi><mrow><mi mathvariant="normal">w</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">d</mi></mrow></msub><mo>=</mo><mi mathvariant="normal">CE</mi><mo>⁡</mo><mo stretchy="false">(</mo><msub><mi>p</mi><mi>θ</mi></msub><mo stretchy="false">(</mo><mi>w</mi><mo>∣</mo><mi>z</mi><mo stretchy="false">)</mo><mo separator="true">,</mo><msup><mi>w</mi><mo>∗</mo></msup><mo stretchy="false">)</mo><mo>+</mo><mrow><mo fence="true">(</mo><mn>1</mn><mo>−</mo><mfrac><mrow><msup><mi>z</mi><mi mathvariant="normal">⊤</mi></msup><mi>g</mi></mrow><mrow><mi mathvariant="normal">∥</mi><mi>z</mi><mi mathvariant="normal">∥</mi><mi mathvariant="normal">∥</mi><mi>g</mi><mi mathvariant="normal">∥</mi><mo>+</mo><mi>ϵ</mi></mrow></mfrac><mo fence="true">)</mo></mrow><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+\mathcal{L}_{\mathrm{word}}
+=\operatorname{CE}(p_\theta(w\mid z),w^*)
++\left(1-\frac{z^\top g}{\|z\|\|g\|+\epsilon}\right).
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathcal">L</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">word</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mop"><span class="mord mathrm">CE</span></span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal">p</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0278em;">θ</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mopen">(</span><span class="mord mathnormal" style="margin-right:0.0269em;">w</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">∣</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal" style="margin-right:0.044em;">z</span><span class="mclose">)</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0269em;">w</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.7387em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mbin mtight">∗</span></span></span></span></span></span></span></span><span class="mclose">)</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:2.4761em;vertical-align:-0.95em;"></span><span class="minner"><span class="mopen delimcenter" style="top:0em;"><span class="delimsizing size3">(</span></span><span class="mord">1</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mord"><span class="mopen nulldelimiter"></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.5261em;"><span style="top:-2.314em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord">∥</span><span class="mord mathnormal" style="margin-right:0.044em;">z</span><span class="mord">∥∥</span><span class="mord mathnormal" style="margin-right:0.0359em;">g</span><span class="mord">∥</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mord mathnormal">ϵ</span></span></span><span style="top:-3.23em;"><span class="pstrut" style="height:3em;"></span><span class="frac-line" style="border-bottom-width:0.04em;"></span></span><span style="top:-3.677em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord"><span class="mord mathnormal" style="margin-right:0.044em;">z</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8491em;"><span style="top:-3.063em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">⊤</span></span></span></span></span></span></span></span><span class="mord mathnormal" style="margin-right:0.0359em;">g</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.936em;"><span></span></span></span></span></span><span class="mclose nulldelimiter"></span></span><span class="mclose delimcenter" style="top:0em;"><span class="delimsizing size3">)</span></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord">.</span></span></span></span></span></eqn></section><p>这里 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msup><mi>w</mi><mo>∗</mo></msup></mrow><annotation encoding="application/x-tex">w^*</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6887em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0269em;">w</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.6887em;"><span style="top:-3.063em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mbin mtight">∗</span></span></span></span></span></span></span></span></span></span></span></eq> 是动作标签，<eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>g</mi></mrow><annotation encoding="application/x-tex">g</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.625em;vertical-align:-0.1944em;"></span><span class="mord mathnormal" style="margin-right:0.0359em;">g</span></span></span></span></eq> 是相应模态的未来观测编码。这个式子只说明词与动态如何绑定，不代表完整训练损失。</p>
+<p>直观地说，模型既要回答“接下来属于什么操作”，也要让内部表示包含对后续感知状态的预测。后者使动作词超出一个阶段标签的作用。</p>
+<h2 id="section-2">3. 从预测动作词到输出机器人动作</h2>
+<p>模型采用 MoT：Cosmos-Predict2.5-2B 初始化时序感知分支，Qwen3-VL-2B 初始化推理与动作分支，通过共享 Attention 交换信息。Physical Words 按未来时间块生成，再为动作生成提供上下文；动作部分使用 flow matching。训练包括视频、词标签、未来 latent 和动作四类目标。<a href="https://arxiv.org/html/2610.26854v3#S3">论文 §3.2–3.5</a></p>
+<p>理解流程时，可以抓住这条主线：</p>
+<p><strong>当前观测与指令 → 预测后续操作阶段及其动态 → 利用这些预测生成动作 → 获得新观测，再决定后续操作。</strong></p>
+<p>这也解释了它和纯文本任务规划的区别。只输出“接近、抓取、放置”，下游仍需自己补全全部物理细节；Physical Words 希望把语义与动态表示一起交给动作生成部分。</p>
+<p>但词预测正确，也不意味着执行一定成功。模型可能知道现在应该抓取，却仍然选错接触位置，或者没有形成稳定夹持。判断中间表示是否有效，最终还要看它是否改善实际控制。</p>
+<h2 id="section-3">4. 实验结果要分开读</h2>
+<p>项目报告的两个主要仿真结果是：</p>
+<table>
+<thead>
+<tr>
+<th>基准</th>
+<th>感知设置</th>
+<th>成功率</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>UniVTAC</td>
+<td>视觉与触觉</td>
+<td>90.3%</td>
+</tr>
+<tr>
+<td>LIBERO-Long</td>
+<td>视觉</td>
+<td>99.6%</td>
+</tr>
+</tbody>
+</table>
+<p>这说明方法在所测试的两种设置下都有较好表现，不能将两项数字理解成相同难度上的直接比较，也不能把 LIBERO-Long 的成功率直接外推到真实灵巧操作。<a href="https://nvidia-isaac.github.io/video_to_data/physicalword/">项目实验结果</a></p>
+<p>提供的介绍还强调双臂夹爪与 Sharpa 灵巧手上的长程、接触密集和精细操作，以及训练中没有出现的扩展任务序列。这里值得关注的是：已有操作原语能否在新阶段被重新调用，而不仅是完整训练轨迹能否被重放。</p>
+<p>不过，“能执行某些扩展序列”和“任意技能都能自由组合”之间还有距离。新组合可能改变物体状态、接触条件与失败分布，前一个技能的终点也未必满足后一个技能的起点要求。</p>
+<h2 id="section-4">5. 不用实时触觉，到底是什么意思？</h2>
+<p>实验将已有模型的实时触觉输入替换成此前预测的触觉 latent；最初尚无预测覆盖的时刻，使用对应任务训练示范开头的观测初始化触觉上下文。它保留了训练中获得的触觉知识。<a href="https://nvidia-isaac.github.io/video_to_data/physicalword/">项目实验说明</a></p>
+<p>具体结果为：</p>
+<table>
+<thead>
+<tr>
+<th>评测</th>
+<th>使用真实触觉</th>
+<th>使用预测触觉</th>
+<th>下降</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>UniVTAC</td>
+<td>90.3%</td>
+<td>89.0%</td>
+<td>1.3 个百分点</td>
+</tr>
+<tr>
+<td>抓取 A4 纸</td>
+<td>93.3%</td>
+<td>90.0%</td>
+<td>3.3 个百分点</td>
+</tr>
+<tr>
+<td>羽毛球插入</td>
+<td>60.0%</td>
+<td>56.7%</td>
+<td>3.3 个百分点</td>
+</tr>
+</tbody>
+</table>
+<p>因此，介绍中的“仅下降 3.3 个百分点”对应两项真实灵巧手任务，并非所有实验的统一结果。<a href="https://nvidia-isaac.github.io/video_to_data/physicalword/">项目反馈实验</a></p>
+<p>这个结果的启发是：触觉既可以作为执行时的反馈，也可以在训练中教模型预测接触。即便部署时没有实时触觉，训练获得的知识仍可能发挥作用。</p>
+<p>但预测触觉没有增加新的外部测量。若发生视觉难以察觉的滑移、意外碰撞或摩擦变化，模型可能仍沿着原先预期预测。它在已测任务上的表现，不能证明真实触觉在所有场景里都可以被替代。</p>
+<p>一个值得继续做的实验，是在正常执行中随机加入外部扰动，分别比较真实触觉、预测触觉和纯视觉策略的恢复能力。这样更容易看清：模型究竟学会了什么，又在哪些时刻需要新的测量。</p>
+<h2 id="section-5">6. 为什么它适合讨论“大小脑接口”？</h2>
+<p>下面是基于这项工作的系统设计思考，不代表论文已经实现一个通用 Agent。</p>
+<p>高层推理通常擅长处理目标、步骤、对象关系；低层控制必须应对速度、位置和接触变化。Physical Words 提供了一种连接方式：高层可以沿着动作语义组织任务，低层利用连续表示处理当前情境中的执行细节。</p>
+<p>但一个可用接口还需要回答三个问题：</p>
+<ul>
+<li><strong>何时可以开始？</strong> 物体是否可达，是否已经具备稳定接触，前置条件是否满足？</li>
+<li><strong>何时算完成？</strong> 动作发出了，不代表物体已经抓稳或插入成功，需要观测证据。</li>
+<li><strong>失败后怎么办？</strong> 应该继续、重试、换一种接触方式，还是交还高层重新规划？</li>
+</ul>
+<p>所以，对 Agent 更有用的技能接口，可以进一步包含动作语义、动态预测、完成证据和不确定性。Physical Words 提供了其中很有意思的一部分，剩余部分仍需要设计和验证。</p>
+<h2 id="section-6">7. 对 WAM 研究的启发</h2>
+<p>这项工作让我更关注一个问题：<strong>未来预测应该如何组织，才能更容易被动作模型使用？</strong></p>
+<p>只追求预测更多画面或更多 latent，不一定能让下游更容易抽取操作知识。给连续预测增加动作语义，可能让不同场景的相似经验更容易联系起来。</p>
+<p>可以沿着这个问题做三组对照：</p>
+<table>
+<thead>
+<tr>
+<th>对照</th>
+<th>想弄清什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>只预测动作词、只预测动态、两者联合</td>
+<td>语义与动态分别贡献了什么</td>
+</tr>
+<tr>
+<td>相同动作、不同对象与接触条件</td>
+<td>表示是否既保留共同语义，又区分执行细节</td>
+</tr>
+<tr>
+<td>相同技能集合、不同执行顺序与失败扰动</td>
+<td>提升来自轨迹熟悉度，还是可以复用的能力</td>
+</tr>
+</tbody>
+</table>
+<p>还有一个应当单独验证的主张是 scaling。把物理经验组织成词汇，为扩展训练提供了一个方向，但是否具有类似语言模型的规模收益，需要固定评测、逐步增加数据和模型规模后观察。语言形式本身不能替代这类证据。</p>
+<p>我更看重 PhysWord 的表示设计：让“做什么”和“接下来会怎样”在训练中发生联系。对于接触操作，这种联系有机会帮助模型把高层意图落实为具体控制；对于 Agent，它也提供了一个值得继续完善的技能接口。</p>
+<footer><a href="../index.html#notes">← All notes</a></footer></article></main></body></html>

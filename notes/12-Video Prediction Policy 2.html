@@ -1,0 +1,26 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Video Prediction Policy 2：先把视频预测学好，再训练动作策略 · Jieming Li</title><link rel="stylesheet" href="../assets/styles.css"><link rel="stylesheet" href="../assets/notes.css"><link rel="stylesheet" href="vendor/katex/katex.min.css"></head><body class="note-page"><header class="note-nav"><a href="../index.html#notes">← Notes</a><a href="../index.html">Jieming Li</a></header><main class="note-layout"><aside class="note-outline"><p class="eyebrow">On this page</p><nav aria-label="目录"><ol><li><a href="#section-0">1. 操作视频预测需要理解事件</a></li><li><a href="#section-1">2. VPP2 的三阶段训练</a></li><li><a href="#section-5">3. 实验结果说明了什么</a></li><li><a href="#section-6">4. 训练时需要注意的地方</a></li><li><a href="#section-7">5. 局限与判断</a></li></ol></nav></aside><article class="note-content" id="content"><p class="eyebrow">Research notebook · 研究笔记</p><h1 id="noteTitle">Video Prediction Policy 2：先把视频预测学好，再训练动作策略</h1>
+<p>Video Prediction Policy 2（VPP2）的核心观点是：World-Action Model 的瓶颈不一定只在动作预测，很多时候是视频模型根本没有正确理解“要操作哪个对象、动作如何发生、最后应该到达什么状态”。如果未来视频预测错了，动作模块即使执行得很准确，也会忠实地完成错误的操作。</p>
+<h2 id="section-0">1. 操作视频预测需要理解事件</h2>
+<p>普通视频生成可以产生视觉上连续、自然的画面，但这不等于它理解了操作任务。一个场景里有多个相似杯子时，模型可能生成合理的拿取动作，却拿错目标。擦拭、开合、翻转和装箱等任务还要求模型理解接触顺序、对象状态变化和最终结果。</p>
+<p>因此 VPP2 把视频预测目标从“生成看起来合理的未来帧”，推进到“根据语言指令预测正确的操作事件”。这也是它把视频基础模型放在动作模块之前训练的原因。</p>
+<h2 id="section-1">2. VPP2 的三阶段训练</h2>
+<h3 id="section-2">事件级操作视频预训练</h3>
+<p>VPP2 收集人类和机器人操作视频，并为片段提供更细的事件级描述。描述不仅写“手拿起杯子”，还应说明对象、动作、空间关系和过程结果。模型在这一阶段学习语言与完整操作轨迹的对应关系。</p>
+<p>这样做的目的，是让视频模型先学会一次操作如何发生，而不是只学习相邻几帧之间的局部变化。数据覆盖人手、多种机器人形态以及开合、擦拭、放置、翻转、装箱等任务，有助于降低单一 embodiment 带来的偏差。</p>
+<h3 id="section-3">固定时域后训练与蒸馏</h3>
+<p>操作视频的未来范围如果每次都不同，动作模块很难稳定读取。VPP2 将预测调整为固定时长的未来，再把多步视频预测蒸馏成单步 Visual Planner，减少在线生成成本。</p>
+<p>这里的“单步”指一次生成未来规划表示，并不代表机器人只执行一个关节动作。机器人仍然可以执行一段动作块，然后根据新的观测再次规划。</p>
+<h3 id="section-4">动作模块与隐式逆动力学</h3>
+<p>在视频能力稳定后，VPP2 使用 mixture-of-transformers（MoT）加入 Action Expert。Video Planner 生成未来视频 latent，Action Expert 读取当前观测、语言指令和未来表示，输出一段连续机器人动作。动作模块通过训练数据学习隐式逆动力学：给定预期的视觉变化，推断机器人应该如何运动。</p>
+<p>整体过程可以写成：</p>
+<p><strong>操作视频与详细描述 → 事件级视频继续预训练 → 固定时域后训练与蒸馏 → Action Expert 学习动作。</strong></p>
+<h2 id="section-5">3. 实验结果说明了什么</h2>
+<p>论文报告 VPP2-14B 在开放式视频预测的指令跟随成功率上比 Cosmos3-64B 高 11.0 个百分点。在真实 ALOHA 机器人零样本任务中，比最强对照高 18.5 个百分点；在 RoboDojo、LIBERO-Pro 和 LIBERO-OOD 等基准上，经过相应后训练后也取得领先结果。</p>
+<p>这些结果支持一个比较明确的判断：操作视频预测是否遵循语言指令，会直接影响后续动作泛化。视频模块变得更懂任务之后，Action Expert 才有机会把这种能力转成动作。</p>
+<h2 id="section-6">4. 训练时需要注意的地方</h2>
+<p>视频预训练和动作训练适合分开评测。可以先检查同一初始观测配上不同指令时，模型是否真的选择了不同对象和不同未来；再检查视频预测正确时，动作是否因为接触、标定或控制误差而失败。</p>
+<p>如果只看动作成功率，容易把视频理解问题和控制问题混在一起。接入 Action Expert 后，也需要重新评估视频指令跟随能力，避免联合训练损伤原有的开放场景泛化。</p>
+<h2 id="section-7">5. 局限与判断</h2>
+<p>VPP2 并不意味着只要预测视频就能直接控制机器人。未来视频的准确性、视觉到动作的映射、接触动力学和低层执行仍是不同问题。ALOHA 的零样本结果也主要表示任务未见，不能直接等同于完全未见的机器人 embodiment。</p>
+<p>它最值得借鉴的地方，是把 WAM 训练拆成一个清楚的顺序：先让世界模型理解操作事件，再把未来表示交给动作模块。对需要开放场景泛化的系统来说，视频模型是否正确理解对象和结果，可能比继续扩大动作头的规模更重要。</p>
+<footer><a href="../index.html#notes">← All notes</a></footer></article></main></body></html>

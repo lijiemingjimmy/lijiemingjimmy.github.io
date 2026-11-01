@@ -199,3 +199,10 @@ main, .site-footer { width: min(calc(100% - 48px), var(--content)); margin: 0 au
 .arena-art strong { display: block; font-family: var(--serif); font-size: 48px; margin: 18px 0; }
 .arena-art p { color: #d5e1e7; }
 .arena-art small { font-size: 11px; }
+
+.portrait { margin: 0; }
+.portrait img { aspect-ratio: auto; height: auto; }
+.portrait figcaption { margin-top: 7px; color: var(--muted); font-size: 11px; line-height: 1.5; text-align: center; }
+@media (max-width: 720px) {
+  .info-sidebar .portrait { grid-row: 1 / 4; }
+}

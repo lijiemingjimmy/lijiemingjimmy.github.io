@@ -57,7 +57,7 @@ test("homepage uses the requested Jimmy branding and portrait", async () => {
   const html = await read("index.html");
   assert.match(html, /lijiemingjimmy\.github\.io/);
   assert.match(html, /Welcome to Jimmy's homepage/);
-  assert.match(html, /assets\/images\/profile\.jpg/);
+  assert.match(html, /assets\/images\/profile-zhiyuan\.jpg/);
   assert.doesNotMatch(html, /class=["']brand["']/);
   assert.doesNotMatch(html, /Learning how the world changes/);
   assert.doesNotMatch(html, /Jieming\.li · Embodied intelligence/);

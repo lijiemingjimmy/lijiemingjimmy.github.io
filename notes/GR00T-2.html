@@ -1,0 +1,448 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>GR00T 2：把未来视频、机器人动作和 Agent 执行连起来 · Jieming Li</title><link rel="stylesheet" href="../assets/styles.css"><link rel="stylesheet" href="../assets/notes.css"><link rel="stylesheet" href="vendor/katex/katex.min.css"></head><body class="note-page"><header class="note-nav"><a href="../index.html#blog">← Blog</a><a href="../index.html">Jieming Li</a></header><main class="note-layout"><aside class="note-outline"><p class="eyebrow">On this page</p><nav aria-label="目录"><ol><li><a href="#section-0">1. 先看总图：GR00T 2 实际上包含几条路线</a></li><li><a href="#section-1">2. 从 VLA 到 WAM：增加了哪个学习目标？</a></li><li><a href="#section-2">3. 架构具体怎样搭？</a></li><li><a href="#section-8">4. 联合 Flow Matching 怎样训练？</a></li><li><a href="#section-9">5. 人类数据为什么能够迁移到机器人？</a></li><li><a href="#section-13">6. 五条示范到 95%：强在哪里，筛选条件又在哪里？</a></li><li><a href="#section-14">7. RL 后训练：补的是接触和精度</a></li><li><a href="#section-17">8. Agentic GR00T 2：把 WAM 作为可调用的执行工具</a></li><li><a href="#section-20">9. Visual Steering：把“哪个物体、放哪里”直接画出来</a></li><li><a href="#section-24">10. Turbo 与 SONIC：慢一点决定，快一点执行</a></li><li><a href="#section-28">11. 三个最值得继续研究的问题</a></li><li><a href="#section-32">12. 和 Gemini Robotics 2.5、CEL、WAM 笔记怎样联系？</a></li><li><a href="#section-33">13. 阅读与复现时保留这些口径</a></li></ol></nav></aside><article class="note-content" id="content"><p class="eyebrow">Research notebook · 研究笔记</p><h1 id="noteTitle">GR00T 2：把未来视频、机器人动作和 Agent 执行连起来</h1>
+<p>论文：<strong>GR00T 2: Scaling Robot Foundation Models for Generalization, Dexterity, and Adaptation</strong>，NVIDIA，2026 年 11 月。</p>
+<p>资料：<a href="https://research.nvidia.com/labs/gear/gr00t-2/">官方项目页</a> · <a href="https://research.nvidia.com/labs/gear/gr00t-2/assets/gr00t2_whitepaper.pdf">官方白皮书</a> · <a href="media/assets/GR00T-2/gr00t2_whitepaper.pdf">本地白皮书备份</a>。</p>
+<p><strong>GR00T 2 的核心设计，是在一个模型里联合预测未来画面和机器人动作，再把这个动作模型交给高层 Agent 调用、引导和纠错。</strong></p>
+<p>它把几个问题连在一起：人类视频怎样成为机器人学习的数据；换一个机器人本体后，已有技能怎样迁移；少量示范和真实执行怎样改善精度；基础策略出错后，Agent 怎样接手处理。</p>
+<p>下面的六张图均来自白皮书，已保存到笔记旁的 <code>assets/GR00T-2/</code>，不依赖临时文件或网络图片。图下保留原图编号和页码，方便回到原文查证。本文中的解释性公式和研究建议另行标明。</p>
+<h2 id="section-0">1. 先看总图：GR00T 2 实际上包含几条路线</h2>
+<p><img src="media/assets/GR00T-2/fig01-overview.png" alt="GR00T 2 总览：人类与机器人数据、联合视频动作预测及下游应用"></p>
+<p><em>图 1，白皮书第 4 页。上面是数据，中间是输入输出，下面是迁移、后训练、Agent 和人形机器人应用。</em></p>
+<p>图中间最重要。模型输入语言目标、多视角历史视频和机器人状态，输出多视角未来视频与机器人动作。它不仅要学“手接下来怎么动”，还要预测这些动作对应的场景变化。</p>
+<p>下面几块需要分别读：</p>
+<table>
+<thead>
+<tr>
+<th>路线</th>
+<th>解决的问题</th>
+<th>改进主要发生在哪里</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>X-Adapt</td>
+<td>目标任务没有目标机器人的遥操作示范，怎样迁移</td>
+<td>跨本体数据与共同表示</td>
+</tr>
+<tr>
+<td>Few-shot adaptation</td>
+<td>已有任务理解，具体执行还不够准</td>
+<td>少量示范下的参数适配</td>
+</tr>
+<tr>
+<td>RL post-training</td>
+<td>示范之后仍有接触、精度和可靠性问题</td>
+<td>动作探索与策略更新</td>
+</tr>
+<tr>
+<td>Agentic control</td>
+<td>长任务需要记忆、验证和失败恢复</td>
+<td>执行流程与工具调用</td>
+</tr>
+<tr>
+<td>Turbo + SONIC</td>
+<td>人形机器人需要低延迟与高频全身控制</td>
+<td>视频表示压缩与分层控制</td>
+</tr>
+</tbody>
+</table>
+<p>这些路线可以互相配合，但实验中的高分往往来自特定组合。理解结果之前，先问清楚用了哪一层。</p>
+<h2 id="section-1">2. 从 VLA 到 WAM：增加了哪个学习目标？</h2>
+<p>普通动作策略可以抽象为：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi>p</mi><mi>θ</mi></msub><mo stretchy="false">(</mo><msup><mi>A</mi><mo>+</mo></msup><mo>∣</mo><msup><mi>O</mi><mo>−</mo></msup><mo separator="true">,</mo><mi>q</mi><mo separator="true">,</mo><mi>c</mi><mo stretchy="false">)</mo><mo separator="true">,</mo></mrow><annotation encoding="application/x-tex">
+p_\theta(A^+\mid O^-,q,c),
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:1.0713em;vertical-align:-0.25em;"></span><span class="mord"><span class="mord mathnormal">p</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0278em;">θ</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal">A</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8213em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mbin mtight">+</span></span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">∣</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1.0713em;vertical-align:-0.25em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0278em;">O</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8213em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mbin mtight">−</span></span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal" style="margin-right:0.0359em;">q</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal">c</span><span class="mclose">)</span><span class="mpunct">,</span></span></span></span></span></eqn></section><p>其中 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msup><mi>O</mi><mo>−</mo></msup></mrow><annotation encoding="application/x-tex">O^-</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.7713em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0278em;">O</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.7713em;"><span style="top:-3.063em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mbin mtight">−</span></span></span></span></span></span></span></span></span></span></span></eq> 是历史观测，<eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>q</mi></mrow><annotation encoding="application/x-tex">q</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.625em;vertical-align:-0.1944em;"></span><span class="mord mathnormal" style="margin-right:0.0359em;">q</span></span></span></span></eq> 是本体状态，<eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>c</mi></mrow><annotation encoding="application/x-tex">c</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.4306em;"></span><span class="mord mathnormal">c</span></span></span></span></eq> 是指令，<eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msup><mi>A</mi><mo>+</mo></msup></mrow><annotation encoding="application/x-tex">A^+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.7713em;"></span><span class="mord"><span class="mord mathnormal">A</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.7713em;"><span style="top:-3.063em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mbin mtight">+</span></span></span></span></span></span></span></span></span></span></span></eq> 是未来动作块。</p>
+<p>GR00T 2 增加未来视频变量 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msup><mi>V</mi><mo>+</mo></msup></mrow><annotation encoding="application/x-tex">V^+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.7713em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.2222em;">V</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.7713em;"><span style="top:-3.063em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mbin mtight">+</span></span></span></span></span></span></span></span></span></span></span></eq>：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi>p</mi><mi>θ</mi></msub><mo stretchy="false">(</mo><msup><mi>V</mi><mo>+</mo></msup><mo separator="true">,</mo><msup><mi>A</mi><mo>+</mo></msup><mo>∣</mo><msup><mi>O</mi><mo>−</mo></msup><mo separator="true">,</mo><mi>q</mi><mo separator="true">,</mo><mi>c</mi><mo stretchy="false">)</mo><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+p_\theta(V^+,A^+\mid O^-,q,c).
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:1.0713em;vertical-align:-0.25em;"></span><span class="mord"><span class="mord mathnormal">p</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0278em;">θ</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.2222em;">V</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8213em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mbin mtight">+</span></span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal">A</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8213em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mbin mtight">+</span></span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">∣</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1.0713em;vertical-align:-0.25em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0278em;">O</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8213em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mbin mtight">−</span></span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal" style="margin-right:0.0359em;">q</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal">c</span><span class="mclose">)</span><span class="mord">.</span></span></span></span></span></eqn></section><p>这是概念性分布表示。视频和动作可以采用不同采样频率，不应把两者的序列长度当成相同。</p>
+<p>例如让机器人翻转玩具卡车，模型同时预测卡车和手接下来的视觉变化，以及机器人应该执行的动作。未来画面为动作提供了与物体交互相关的建模目标。</p>
+<p>这里有两个容易混淆的地方。</p>
+<p>第一，GR00T 2 采用联合生成。它并不是必须先完整生成一段视频，再调用另一个独立模型把视频转换为动作。</p>
+<p>第二，生成未来也不自动等于显式规划。项目的主体方法不是“采样很多未来、逐条评分、搜索最佳动作”的 MPC 流程。它主要通过共享模型和联合去噪，让动作生成使用所预测的视觉动态。是否带来额外的推理时规划收益，需要专门消融。</p>
+<p>这也解释了为什么人类视频有用：即使没有目标机器人的动作标签，未来画面仍然可以成为监督。但从视频监督到可执行动作之间，还需要机器人数据建立联系。</p>
+<h2 id="section-2">3. 架构具体怎样搭？</h2>
+<p>依据白皮书第 2 节，GR00T 2 从 <strong>Cosmos-Predict2.5-2B</strong> 初始化，联合视频与动作的 Transformer 约为 <strong>2B 参数</strong>。这个数字指主体 Transformer，不应直接当作所有冻结编码器加在一起的系统总参数量。</p>
+<h3 id="section-3">3.1 输入是短历史、多视角和本体状态</h3>
+<p>模型接收约 0.8 秒历史，以 5 fps 组织 224 × 320 图像，最多四个相机视角，常见的是头部和两个腕部相机。另有机器人状态与自然语言指令。</p>
+<p>短历史能够提供局部运动信息，但不足以记住长任务全过程。论文把显式任务记忆更多交给高层 Agent。这一点会影响 benchmark：需要记住此前发生的事情时，不能只比较当前画面的动作能力。</p>
+<h3 id="section-4">3.2 视频先进入冻结 VAE</h3>
+<p>主版使用冻结的 Wan 2.1 Video VAE：时间压缩 4 倍，空间宽高分别压缩 8 倍。压缩后的 latent 再形成 token，并添加 camera-view embedding，区分不同相机。</p>
+<p>以给定分辨率计算，VAE 的空间网格约为：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mfrac><mn>224</mn><mn>8</mn></mfrac><mo>×</mo><mfrac><mn>320</mn><mn>8</mn></mfrac><mo>=</mo><mn>28</mn><mo>×</mo><mn>40.</mn></mrow><annotation encoding="application/x-tex">
+\frac{224}{8}\times\frac{320}{8}=28\times40.
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:2.0074em;vertical-align:-0.686em;"></span><span class="mord"><span class="mopen nulldelimiter"></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.3214em;"><span style="top:-2.314em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord">8</span></span></span><span style="top:-3.23em;"><span class="pstrut" style="height:3em;"></span><span class="frac-line" style="border-bottom-width:0.04em;"></span></span><span style="top:-3.677em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord">224</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.686em;"><span></span></span></span></span></span><span class="mclose nulldelimiter"></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">×</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:2.0074em;vertical-align:-0.686em;"></span><span class="mord"><span class="mopen nulldelimiter"></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.3214em;"><span style="top:-2.314em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord">8</span></span></span><span style="top:-3.23em;"><span class="pstrut" style="height:3em;"></span><span class="frac-line" style="border-bottom-width:0.04em;"></span></span><span style="top:-3.677em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord">320</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.686em;"><span></span></span></span></span></span><span class="mclose nulldelimiter"></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.7278em;vertical-align:-0.0833em;"></span><span class="mord">28</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">×</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.6444em;"></span><span class="mord">40.</span></span></span></span></span></eqn></section><p>白皮书报告进一步分块后，每个 latent 帧、每个相机对应 280 个视频 token。VAE 网格数量和 Transformer token 数不是同一个量。</p>
+<p>这一步让模型不必直接在完整像素阵列上计算注意力。不过，多相机和未来帧仍然带来大量视觉 token，后面的 Turbo 正是针对这部分成本做压缩。</p>
+<h3 id="section-5">3.3 语言通过 cross-attention 提供条件</h3>
+<p>冻结的 Cosmos-Reason1 编码指令，Transformer 通过 cross-attention 读取语言特征。语言负责告诉模型该执行哪个任务，视觉和本体状态则描述当前处境。</p>
+<h3 id="section-6">3.4 本体专用模块连接共享 Transformer</h3>
+<p>不同机器人使用小型 state/action MLP，把自身状态和带噪动作映射到统一维度，再由相应解码模块转回动作空间。</p>
+<p>共享的部分学习交互和任务规律，本体模块处理动作维度及表示差异。这使跨本体训练更容易组织，但不意味着新机器人无需数据或标定即可接入。相机配置、动作表示和控制器仍然需要适配。</p>
+<h3 id="section-7">3.5 动作可以关注正在生成的未来视频</h3>
+<p>视频 token 能跨时间和相机交互；动作 token 可以关注全部视频 token，包括未来视频 latent。这样，动作预测使用的不只是已观察到的图像，也包括模型当前对未来的预测。</p>
+<p>这是 WAM 的核心连接。但图像预测与动作在真实物理系统中的一致性仍然需要验证：模型可能生成“看起来会成功”的视频，同时输出实际无法完成的动作。</p>
+<h2 id="section-8">4. 联合 Flow Matching 怎样训练？</h2>
+<p>为了说明原理，设干净视频 latent 为 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msup><mi>z</mi><mi>v</mi></msup></mrow><annotation encoding="application/x-tex">z^v</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6644em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.044em;">z</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.6644em;"><span style="top:-3.063em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0359em;">v</span></span></span></span></span></span></span></span></span></span></span></eq>、动作表示为 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msup><mi>z</mi><mi>a</mi></msup></mrow><annotation encoding="application/x-tex">z^a</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6644em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.044em;">z</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.6644em;"><span style="top:-3.063em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">a</span></span></span></span></span></span></span></span></span></span></span></eq>。对任一模态 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>m</mi></mrow><annotation encoding="application/x-tex">m</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.4306em;"></span><span class="mord mathnormal">m</span></span></span></span></eq>，用如下常见插值约定：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msubsup><mi>x</mi><mi>τ</mi><mi>m</mi></msubsup><mo>=</mo><mo stretchy="false">(</mo><mn>1</mn><mo>−</mo><mi>τ</mi><mo stretchy="false">)</mo><msup><mi>z</mi><mi>m</mi></msup><mo>+</mo><mi>τ</mi><msup><mi>ϵ</mi><mi>m</mi></msup><mo separator="true">,</mo><mspace width="1em"/><msup><mi>ϵ</mi><mi>m</mi></msup><mo>∼</mo><mi mathvariant="script">N</mi><mo stretchy="false">(</mo><mn>0</mn><mo separator="true">,</mo><mi>I</mi><mo stretchy="false">)</mo><mo separator="true">,</mo><mspace width="1em"/><msup><mi>u</mi><mrow><mi>m</mi><mo separator="true">,</mo><mo>∗</mo></mrow></msup><mo>=</mo><msup><mi>ϵ</mi><mi>m</mi></msup><mo>−</mo><msup><mi>z</mi><mi>m</mi></msup><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+x^m_\tau=(1-\tau)z^m+\tau\epsilon^m,
+\quad \epsilon^m\sim\mathcal N(0,I),
+\quad u^{m,*}=\epsilon^m-z^m.
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.9614em;vertical-align:-0.247em;"></span><span class="mord"><span class="mord mathnormal">x</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.7144em;"><span style="top:-2.453em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.1132em;">τ</span></span></span><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">m</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.247em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mopen">(</span><span class="mord">1</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal" style="margin-right:0.1132em;">τ</span><span class="mclose">)</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.044em;">z</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.7144em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">m</span></span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.9088em;vertical-align:-0.1944em;"></span><span class="mord mathnormal" style="margin-right:0.1132em;">τ</span><span class="mord"><span class="mord mathnormal">ϵ</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.7144em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">m</span></span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:1em;"></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal">ϵ</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.7144em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">m</span></span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">∼</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathcal" style="margin-right:0.1474em;">N</span><span class="mopen">(</span><span class="mord">0</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal" style="margin-right:0.0785em;">I</span><span class="mclose">)</span><span class="mpunct">,</span><span class="mspace" style="margin-right:1em;"></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal">u</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.7387em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">m</span><span class="mpunct mtight">,</span><span class="mord mtight">∗</span></span></span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.7977em;vertical-align:-0.0833em;"></span><span class="mord"><span class="mord mathnormal">ϵ</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.7144em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">m</span></span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.7144em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.044em;">z</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.7144em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">m</span></span></span></span></span></span></span></span><span class="mord">.</span></span></span></span></span></eqn></section><p>这里 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>τ</mi><mo>=</mo><mn>0</mn></mrow><annotation encoding="application/x-tex">\tau=0</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.4306em;"></span><span class="mord mathnormal" style="margin-right:0.1132em;">τ</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.6444em;"></span><span class="mord">0</span></span></span></span></eq> 是数据、<eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>τ</mi><mo>=</mo><mn>1</mn></mrow><annotation encoding="application/x-tex">\tau=1</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.4306em;"></span><span class="mord mathnormal" style="margin-right:0.1132em;">τ</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.6444em;"></span><span class="mord">1</span></span></span></span></eq> 是噪声；生成时沿相反方向从噪声走向数据。也有实现使用相反时间约定，不能只看正负号判断对错。</p>
+<p>示意性的双目标为：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mi>L</mi><mo>=</mo><msub><mi>λ</mi><mi>v</mi></msub><mi mathvariant="double-struck">E</mi><mi mathvariant="normal">∥</mi><msubsup><mi>u</mi><mi>θ</mi><mi>v</mi></msubsup><mo>−</mo><msup><mi>u</mi><mrow><mi>v</mi><mo separator="true">,</mo><mo>∗</mo></mrow></msup><msup><mi mathvariant="normal">∥</mi><mn>2</mn></msup><mo>+</mo><msub><mi>λ</mi><mi>a</mi></msub><mi mathvariant="double-struck">E</mi><mrow><mo fence="true">[</mo><msub><mi>m</mi><mi>a</mi></msub><mi mathvariant="normal">∥</mi><msubsup><mi>u</mi><mi>θ</mi><mi>a</mi></msubsup><mo>−</mo><msup><mi>u</mi><mrow><mi>a</mi><mo separator="true">,</mo><mo>∗</mo></mrow></msup><msup><mi mathvariant="normal">∥</mi><mn>2</mn></msup><mo fence="true">]</mo></mrow><mo separator="true">,</mo></mrow><annotation encoding="application/x-tex">
+L=\lambda_v\mathbb E\|u^v_\theta-u^{v,*}\|^2
++\lambda_a\mathbb E\left[m_a\|u^a_\theta-u^{a,*}\|^2\right],
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord mathnormal">L</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord"><span class="mord mathnormal">λ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0359em;">v</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mord mathbb">E</span><span class="mord">∥</span><span class="mord"><span class="mord mathnormal">u</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.7144em;"><span style="top:-2.453em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0278em;">θ</span></span></span><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0359em;">v</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.247em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1.1141em;vertical-align:-0.25em;"></span><span class="mord"><span class="mord mathnormal">u</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.7387em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right:0.0359em;">v</span><span class="mpunct mtight">,</span><span class="mord mtight">∗</span></span></span></span></span></span></span></span></span><span class="mord"><span class="mord">∥</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8641em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">2</span></span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1.2141em;vertical-align:-0.35em;"></span><span class="mord"><span class="mord mathnormal">λ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">a</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mord mathbb">E</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="minner"><span class="mopen delimcenter" style="top:0em;"><span class="delimsizing size1">[</span></span><span class="mord"><span class="mord mathnormal">m</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">a</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mord">∥</span><span class="mord"><span class="mord mathnormal">u</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.7144em;"><span style="top:-2.453em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0278em;">θ</span></span></span><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">a</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.247em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mord"><span class="mord mathnormal">u</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.7387em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">a</span><span class="mpunct mtight">,</span><span class="mord mtight">∗</span></span></span></span></span></span></span></span></span><span class="mord"><span class="mord">∥</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8641em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">2</span></span></span></span></span></span></span></span><span class="mclose delimcenter" style="top:0em;"><span class="delimsizing size1">]</span></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mpunct">,</span></span></span></span></span></eqn></section><p><eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>m</mi><mi>a</mi></msub></mrow><annotation encoding="application/x-tex">m_a</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.5806em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal">m</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">a</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span></eq> 表示该样本是否具有有效动作监督。这个表达帮助理解视频与动作共同训练，不是对原文所有噪声调度和损失权重的逐项复写。</p>
+<p>重要的是：没有有效动作标签的视频样本，仍能贡献视频预测损失；有机器人动作或有效人手轨迹监督的样本，还能参与动作学习。两部分更新共享模型，从而建立视觉动态与动作之间的联系。</p>
+<p>部署时，论文采用视频 1–2 步、动作 2–4 步的少步去噪配置。不同模态的步数可以不同，不能将一次动作规划理解成几十步完整视频生成。</p>
+<h2 id="section-9">5. 人类数据为什么能够迁移到机器人？</h2>
+<h3 id="section-10">5.1 三类数据分别补什么</h3>
+<table>
+<thead>
+<tr>
+<th>数据来源</th>
+<th style="text-align:right">报告时长</th>
+<th>主要作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Human-1M 人类第一视角数据</td>
+<td style="text-align:right">402,730 小时</td>
+<td>交互种类、物体、任务和场景覆盖</td>
+</tr>
+<tr>
+<td>UMI 手持夹爪示范</td>
+<td style="text-align:right">10,184 小时</td>
+<td>更接近机器人操作方式的任务轨迹</td>
+</tr>
+<tr>
+<td>机器人遥操作</td>
+<td style="text-align:right">23,500 小时</td>
+<td>具体本体的观测与可执行动作对应</td>
+</tr>
+</tbody>
+</table>
+<p>来源：白皮书第 4.2 节及数据附录。原始数据时长不等于训练采样比例；也不能把所有人类数据都当成完全没有动作信息的普通互联网视频。论文在具备条件的数据上使用跟踪的人手姿态作为动作监督。</p>
+<p>人类视频最直接提供的是“这个操作通常怎样改变物体”。机器人数据补上“当前这双手如何实现这种变化”。UMI 则处在两者之间：由人采集，但设备约束和动作表示更接近机器人。</p>
+<h3 id="section-11">5.2 三阶段训练的目的</h3>
+<p><strong>阶段一：单视角视频预训练。</strong> 在人类第一视角数据和机器人视频上学习未来视频预测，先适应具身交互场景。</p>
+<p><strong>阶段二：多视角视频与动作联合训练。</strong> 加入本体专用 state/action 模块，有多视角的数据使用多视角；在有效动作标签存在时应用动作损失。</p>
+<p><strong>阶段三：提高机器人数据权重。</strong> 继续联合训练，更强调机器人执行分布，同时保留人类和其他来源的数据。</p>
+<p>训练顺序体现了一个取舍：人类经验提供广度，但最终输出必须落在机器人能执行的动作分布里。机器人数据占比太低，可能学会丰富的视觉变化却无法精确控制；过早只关注目标机器人，则可能损失广泛经验的价值。</p>
+<h3 id="section-12">5.3 “不用目标任务遥操作”到底是什么意思？</h3>
+<p>论文展示了三种很有代表性的迁移方式：</p>
+<table>
+<thead>
+<tr>
+<th>路线</th>
+<th>源数据与映射</th>
+<th>报告的任务例子</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Human → Dexter</td>
+<td>传感手套记录腕部与手指运动，几何重定向到机械臂和 Sharpa 手</td>
+<td>滤纸安装 65%，滴管操作 30%</td>
+</tr>
+<tr>
+<td>UMI → YAM</td>
+<td>人使用手持夹爪采集目标任务，结合目标机器人的其他任务数据</td>
+<td>玩具卡车装配 60%，NIST 板拆卸 50%</td>
+</tr>
+<tr>
+<td>DexUMI → 灵巧手</td>
+<td>可穿戴设备提供更接近目标手的动作及交互记录</td>
+<td>香蕉酸奶 60%，舀麦片 80%，划火柴点灯 75%</td>
+</tr>
+</tbody>
+</table>
+<p>以上来自白皮书第 3.2 节及附录 B，不同任务和设备的实验设置不同。UMI 分拣中的 86% 是完成比例，不能与完整任务成功率混成同一种指标。</p>
+<p>最重要的边界是：<strong>目标机器人没做过这个任务，不代表模型没有目标机器人数据。</strong> task-agnostic play data 可以帮助模型理解目标机器人的外观和动作空间，再将其他本体上的任务经验迁移过来。</p>
+<p>因此，更准确的表述是“减少或免除目标任务的目标本体遥操作”，而不是“看一段普通视频就能让任意机器人零样本完成任意任务”。</p>
+<h2 id="section-13">6. 五条示范到 95%：强在哪里，筛选条件又在哪里？</h2>
+<p><img src="media/assets/GR00T-2/fig02-fewshot.png" alt="Dexter-50 零样本与少样本结果"></p>
+<p><em>图 2，白皮书第 6 页。左边是平均成功率，右边是不同成功率区间中的任务数量。</em></p>
+<p>Dexter-50 包含 50 个没有出现在目标 Dexter 训练数据中的任务，但这些任务在其他机器人或人类数据中出现过。结果为：</p>
+<table>
+<thead>
+<tr>
+<th>目标机器人示范数</th>
+<th style="text-align:right">平均成功率</th>
+<th>是否更新模型</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td style="text-align:right">40%</td>
+<td>直接运行预训练模型</td>
+</tr>
+<tr>
+<td>1</td>
+<td style="text-align:right">71%</td>
+<td>每个任务做 LoRA 微调</td>
+</tr>
+<tr>
+<td>5</td>
+<td style="text-align:right">95%</td>
+<td>每个任务做 LoRA 微调</td>
+</tr>
+</tbody>
+</table>
+<p>“40/50 个任务至少成功过一次”和“零样本平均成功率 40%”是两个不同统计量，不能混淆。前者说明能力覆盖，后者反映执行可靠性。</p>
+<p>附录 A.3 给出的适配方式是 rank-32 LoRA：冻结原始权重、视频 VAE、文本编码器和 state/action heads，训练 Transformer 线性层上的适配器。每条示范切成 100 个训练窗口，并按冻结模型在窗口上的损失进行采样，让更新更多关注难点。每个任务约在单张 RTX 5090 上训练 30 分钟。</p>
+<p>因此，这里的 few-shot 是少数据参数微调，不是只把五条示范塞进上下文、模型参数完全不变的 in-context learning。</p>
+<p><strong>任务筛选条件必须和 95% 一起读：这 50 个任务选自五条示范后能达到至少 80% 成功率的任务。</strong> 这说明模型在这一类可快速适配的任务上表现很好，但不能用它估计任意新任务的五样本成功率。</p>
+<p>更完整的评测应当预先固定任务集，再报告失败任务和成功任务的全部分布。否则最难适配的任务已经在筛选阶段被排除。</p>
+<h2 id="section-14">7. RL 后训练：补的是接触和精度</h2>
+<p><img src="media/assets/GR00T-2/fig05-real-rl.png" alt="四个真实接触任务的 RL 后训练对比"></p>
+<p><em>图 5，白皮书第 10 页。每根柱对应 50 次测试，误差条为 95% Wilson 区间。带星号的两项使用 CPS 采样噪声评测。</em></p>
+<table>
+<thead>
+<tr>
+<th>任务</th>
+<th style="text-align:right">SFT</th>
+<th style="text-align:right">Residual RL</th>
+<th style="text-align:right">GRPO</th>
+<th style="text-align:right">GRPO 后成功轨迹自模仿</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>固定管件装配</td>
+<td style="text-align:right">66%</td>
+<td style="text-align:right">76%</td>
+<td style="text-align:right">86%</td>
+<td style="text-align:right">88%</td>
+</tr>
+<tr>
+<td>手指精确放置</td>
+<td style="text-align:right">58%</td>
+<td style="text-align:right">84%</td>
+<td style="text-align:right">72%</td>
+<td style="text-align:right">98%</td>
+</tr>
+<tr>
+<td>网线插入</td>
+<td style="text-align:right">76%</td>
+<td style="text-align:right">82%</td>
+<td style="text-align:right">92%</td>
+<td style="text-align:right">94%</td>
+</tr>
+<tr>
+<td>充电器插入</td>
+<td style="text-align:right">40%</td>
+<td style="text-align:right">70%</td>
+<td style="text-align:right">94%</td>
+<td style="text-align:right">96%</td>
+</tr>
+</tbody>
+</table>
+<p>这张图说明，预训练和示范带来的任务知识之外，实际接触还需要进一步适配。尤其是充电器插入，较小的位姿误差就可能使策略反复失败。</p>
+<p>三类方法修改的对象不同：</p>
+<ul>
+<li><strong>Residual RL</strong>：冻结 WAM，训练一个修正策略，调整基础动作。</li>
+<li><strong>GRPO</strong>：直接优化 GR00T 2 的生成策略。</li>
+<li><strong>GRPO-induced self-imitation</strong>：把 GRPO 探索出的成功轨迹用于监督微调。</li>
+</ul>
+<p>不能把最后一列简单叫成“GRPO 成绩”，因为它已经多了一步成功经验学习。手指放置上 GRPO 为 72%、自模仿为 98%，也说明探索得到的经验与最终部署策略之间存在重要差别。</p>
+<h3 id="section-15">Flow policy 怎样获得随机探索？</h3>
+<p>原本较确定性的 flow 去噪，不直接提供 PPO/GRPO 所需的常规随机策略形式。论文采用 Coefficients-Preserving Sampling（CPS），在动作去噪中加入随机性，视频去噪保持确定性，再组织策略优化。</p>
+<p>它的作用是为动作探索及概率比优化提供可用的采样过程，不应简单理解成“在最终关节目标上随便加噪声”。具体概率计算需要按论文附录 F 的去噪过程处理。</p>
+<h3 id="section-16">为什么还要记住历史回报？</h3>
+<p>标准组内相对优势在所有 rollout 同时成功或同时失败时，可能失去区分信号。论文采用包含历史回报信息的 baseline，缓解这个问题。</p>
+<p>但历史 baseline 能提供不同参照，不意味着全失败时就知道正确动作是什么。探索是否能发现成功、失败反馈是否可靠，仍然决定学习效果。</p>
+<p>AutoRL 用约 35 天的仿真实验迭代探索这一训练配方。这里 Agent 改进的是学习算法和实验配置，不应与真实机器人上的 35 天自主学习混为一谈。</p>
+<h2 id="section-17">8. Agentic GR00T 2：把 WAM 作为可调用的执行工具</h2>
+<p><img src="media/assets/GR00T-2/fig06-agent-runtime.png" alt="Agent 通过 MCP 调用 WAM、观测和程序化技能"></p>
+<p><em>图 6，白皮书第 10 页。Agent 在左，工具接口在中间，WAM 与 CaP 共同连接执行环境。</em></p>
+<p>这张图最值得看的不是某个 API 名称，而是控制权怎样交接。</p>
+<ol>
+<li>Agent 调用 <code>wam_act</code>，让 WAM 执行擅长的操作。</li>
+<li>通过图像和机器人状态检查进度。</li>
+<li>如果零件掉落或任务停滞，暂停 WAM。</li>
+<li>调用定位、移动、抓取或特定恢复技能，修复当前状态。</li>
+<li>把控制权交回 WAM，继续原任务。</li>
+</ol>
+<p>例如，装配玩具飞机时，WAM 负责对接、翻转和拧紧。零件掉到桌边后，Agent 可以用 CaP 定位并重新抓取，让场景回到基础策略能继续处理的状态。</p>
+<p>共享执行器需要协调两种控制来源，避免 WAM 和程序化动作同时向机器人发送冲突命令。</p>
+<h3 id="section-18">高成功率属于哪个系统？</h3>
+<p>真实装配评测每次把零件随机倒在桌上，三项任务各 100 次，人工帮助计为失败。SFT + DAgger 的成功次数分别为：飞机 84、拖拉机 71、Hot Wheels 汽车 78；再加入 Agent 后变成 98、97、97。来源：白皮书第 3.4 节、图 7。</p>
+<p>这里的 97%–98% 属于 <strong>纠正数据训练后的 WAM + Agent + CaP 恢复技能</strong>。它有力支持组合系统的可靠性，但不等于预训练基础模型单独执行的成功率。</p>
+<p>在相同 Agent 框架内，换成 RL 后训练的插入策略，还把连续插五根网线的成功次数从 12/20 提高到 19/20，把连续插五个充电器从 2/20 提高到 20/20。这说明更好的低层技能和更好的高层组织可以互补。</p>
+<h3 id="section-19">仿真评测中，还包括预先开发的程序</h3>
+<p>附录 G.1 说明，ASPIRE 在开发 seeds 上发现任务程序，再选择每个任务默认使用程序还是 WAM，随后由 S2 监控并在需要时恢复。因此，这部分 Agentic 成绩也包含开发阶段的技能与程序积累。</p>
+<p>具体做法是先用 15 个开发 seeds 生成程序，再用 30 个开发 seeds（包含前面的 15 个）比较程序与 WAM，平局选程序；测试另用独立 seeds。在论文报告的 SFT 执行器选择中，RoboDojo 的 54 个配置只有 12 个默认使用 WAM，其余默认使用程序。因此，不能把整套系统描述成“所有任务都由 WAM 执行，Agent 只偶尔恢复”。</p>
+<p>RoboDojo 中报告的 75.8% 使用 <strong>layout bank 0</strong>，不是三个官方 layout banks 的完整平均。与其他系统比较时，需要同时对齐任务配置、layout 范围、开发预算和测试 seeds。</p>
+<p>恢复也有边界：附录记录的失败包括需要过高精度的恢复动作，以及物体掉落或剩余时间不足等不可恢复状态。能发现失败，不代表已有工具能把它修好。</p>
+<h2 id="section-20">9. Visual Steering：把“哪个物体、放哪里”直接画出来</h2>
+<p><img src="media/assets/GR00T-2/fig08-visual-steering.png" alt="视觉标记接口与短时程、长时程结果"></p>
+<p><em>图 8，白皮书第 12 页。圆点表示抓取目标，十字表示释放目标，颜色区分左右臂。</em></p>
+<p>语言指令可能说对了，但策略依然抓错对象、放错容器。Visual steering 给高层一个更直接的空间接口：在当前相机画面标出抓取点和释放点，同时指定动作手臂。</p>
+<p>Agent 决定对象和目标位置，WAM 补齐抓取姿态、接近、搬运和释放过程。这个接口比输出全部关节动作简单，也比单纯的自然语言更明确。</p>
+<h3 id="section-21">模型需要学会理解标记</h3>
+<p>这些标记不能直接画到一个从未见过标记的策略输入上，就假设它会遵循。论文需要进行 point-conditioned mid-training。监督通过已有示范中的抓取、释放事件和标定信息自动生成，不需要新的人工作点标注，但仍然需要额外训练。</p>
+<p>附录 G.2 中，高层使用 GPT-6 Astra，每个 episode 一个对话；harness 在释放事件、完成检查或超时条件触发后再次询问 Agent。也就是说，“什么时候看下一次”和“看完后怎么办”分别由执行框架与模型共同完成。</p>
+<p>这部分与上一节的 CaP 恢复还有一个区别：visual steering 中的物理动作仍由 WAM 执行，高层改变其条件；CaP recovery 则可以把控制权切换到程序化技能。</p>
+<h3 id="section-22">平均数如何计算？</h3>
+<p>图 8 的短时程结果为 35.7% → 44.2% → 76.8%，对应原策略、语言引导、语言加视觉引导。长时程为 0% → 1.7% → 53.3%。</p>
+<p><strong>这些是 benchmark 等权平均，不是把所有试次混在一起计算的成功比例。</strong> 附录表 22 的细分结果更能说明能力差异：</p>
+<table>
+<thead>
+<tr>
+<th>评测</th>
+<th style="text-align:right">原策略</th>
+<th style="text-align:right">语言引导</th>
+<th style="text-align:right">语言 + 视觉引导</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>YAM 短指令，144 次</td>
+<td style="text-align:right">60/144</td>
+<td style="text-align:right">80/144</td>
+<td style="text-align:right">120/144</td>
+</tr>
+<tr>
+<td>Dexter 短指令，64 次</td>
+<td style="text-align:right">19/64</td>
+<td style="text-align:right">21/64</td>
+<td style="text-align:right">45/64</td>
+</tr>
+<tr>
+<td>YAM 垃圾分类，20 次</td>
+<td style="text-align:right">0/20</td>
+<td style="text-align:right">0/20</td>
+<td style="text-align:right">17/20</td>
+</tr>
+<tr>
+<td>YAM 装配板拆卸，10 次</td>
+<td style="text-align:right">0/10</td>
+<td style="text-align:right">0/10</td>
+<td style="text-align:right">3/10</td>
+</tr>
+<tr>
+<td>Dexter 垃圾分类，20 次</td>
+<td style="text-align:right">0/20</td>
+<td style="text-align:right">1/20</td>
+<td style="text-align:right">9/20</td>
+</tr>
+</tbody>
+</table>
+<p>Dexter 短指令结果使用较早版本实现，论文已有注明。本文优先采用白皮书表 22；项目页对 Dexter 长任务的文字概述与这一表格并不完全一致，不混用它们得出额外结论。</p>
+<p>视觉标记主要改善对象与目的地的对应关系。它没有完整表达物体最终朝向、施力方式、倾倒角度或擦拭路径，这些仍依赖语言和已有技能。</p>
+<p>还要保留三个实验边界：真机部分没有检验对新场景、新物体的泛化；接口每步只移动一只手，没有覆盖同时双臂协调；YAM 长任务的不同配置涉及不同工位和操作人员，并非完全配对的实验。视觉条件模型也经过专门的中间训练，对照使用语言条件模型，不能将差异全部归因于运行时多画了几个点。来源：附录 G.2，第 104–107 页。</p>
+<h3 id="section-23">接口还要付出延迟成本</h3>
+<p>附录表 24 中，视觉引导垃圾分类每个 episode 中位数为 9 次 Agent 调用。机器人等待 Agent 的时间占比为 YAM 38%、Dexter 32%。这说明高层加入后，应当一起报告成功率和任务耗时。</p>
+<p>对控制系统而言，问题不仅是“Agent 推理得够不够好”，还有“应当在哪些时刻停下来问它”。释放事件、低成本状态检查和需要深度推理的异常，可以采用不同触发方式。</p>
+<h2 id="section-24">10. Turbo 与 SONIC：慢一点决定，快一点执行</h2>
+<p><img src="media/assets/GR00T-2/fig09-whole-body.png" alt="GR00T 2 Turbo 与 SONIC 的三级控制结构"></p>
+<p><em>图 9，白皮书第 13 页。高层选任务，Turbo 生成运动 latent，SONIC 输出关节目标，底层控制器跟踪。</em></p>
+<h3 id="section-25">10.1 Turbo 压缩了什么？</h3>
+<p>白皮书第 2 节明确写到：<strong>Turbo 保留 2B Transformer</strong>，把 Wan 2.1 VAE 换成 Wan 2.2 VAE，空间每维压缩从 8 倍提高到 16 倍，因此空间 latent 网格变为四分之一。输入输出投影相应适配，动作预测时域不变。</p>
+<p>项目页曾使用“更小的 2B Transformer”的表述，但白皮书同时将主版和 Turbo 都定义为 2B。本文采用白皮书口径，不能据此编出主版更大的参数量。</p>
+<p>Turbo 仍然联合预测视频和动作，主要减少视觉 token 成本。空间网格减少四倍，也不代表整个系统必然加速四倍：还有编码器、动作 token、去噪步数、数据传输和控制器成本。</p>
+<h3 id="section-26">10.2 三种频率分别属于哪一层？</h3>
+<table>
+<thead>
+<tr>
+<th>层次</th>
+<th>职责</th>
+<th>论文中的频率或时域</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>S2</td>
+<td>选择任务和子目标</td>
+<td>按需调用</td>
+</tr>
+<tr>
+<td>S1：GR00T 2 Turbo</td>
+<td>根据视觉和本体状态预测运动 latent</td>
+<td>约 1 Hz 规划，输出 1.6 秒动作块</td>
+</tr>
+<tr>
+<td>S0：SONIC</td>
+<td>将运动 latent 转为全身关节位置目标</td>
+<td>50 Hz</td>
+</tr>
+<tr>
+<td>机器人 PD</td>
+<td>跟踪关节目标</td>
+<td>1000 Hz</td>
+</tr>
+</tbody>
+</table>
+<p>Turbo 在 Jetson Thor 上单次预测约 124 ms。<strong>124 ms 是预测延迟，50 Hz 是 SONIC 的控制频率。</strong> 两者不能合并成“整个 WAM 每 20 ms 重新看图并规划”。</p>
+<p>低层控制器承担更快的运动跟踪与身体协调，高层保留更大的感知和动作规划模型。这样的分工也意味着，需要单独检查低层控制器是否足以处理上层预测间隔内的扰动。</p>
+<h3 id="section-27">10.3 效率与细节之间存在取舍</h3>
+<p>白皮书表 1 的七个 Dexter 后训练任务中，主版平均成功率 68.6%，Turbo 为 34.3%。在六个 YAM 后训练任务中则是 71.7% 对 65.0%，而且 Turbo 在其中两项任务上更好。</p>
+<p>这支持“不同任务对预测细节的需求不同”的判断，但不能仅凭这个对比证明全部差距都由空间压缩造成。VAE、表示和训练变化需要进一步隔离。</p>
+<p>表 1 还有一个场景差异：Truck Assembly 中两个 GR00T 2 版本使用了调整后更容易的起始场景，主版在表中为 65%；原场景下主版是 7/20，即 35%。因此，这张表中的跨模型对比还需要结合具体任务协议阅读，不能默认所有模型的起始条件完全相同。</p>
+<p>G1 爆米花服务任务中，Turbo 完成 48/48 次，每次需要两杯。这个结果应保留任务与次数边界；48 次全成功不等于长期部署真实成功概率为 100%。</p>
+<h2 id="section-28">11. 三个最值得继续研究的问题</h2>
+<p>以下是基于论文的研究判断，而非作者已经验证的全部结论。</p>
+<h3 id="section-29">11.1 视频预测的收益发生在训练时，还是推理时？</h3>
+<p>联合视频监督提供更多学习信号，推理时生成未来 latent 又可能帮助动作选择。两种收益容易被混在一起。</p>
+<p>可以在匹配数据与计算预算的条件下，对比纯动作模型、只在训练时使用视频辅助目标的模型，以及推理时仍联合预测视频动作的模型。需要为每个设置设计可训练的结构，不能简单删除已训练模型的视频分支就把下降归因于“规划能力”。</p>
+<p>还应控制视觉细节：背景纹理、物体轮廓、接触点和相对运动，究竟哪些最值得预测？对于操作，花大量算力预测背景未必比准确预测一个接触事件有用。</p>
+<h3 id="section-30">11.2 触觉怎样加入，才真正帮助控制？</h3>
+<p>论文指出当前 GR00T 2 不以触觉作为输入。一些 DexUMI 配置可以输出用于柔顺性控制的关节力矩，但输出力矩与读取触觉形成闭环是两件事。</p>
+<p>可以研究联合预测未来视频、触觉 latent 和动作：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi>p</mi><mi>θ</mi></msub><mo stretchy="false">(</mo><msup><mi>V</mi><mo>+</mo></msup><mo separator="true">,</mo><msup><mi>F</mi><mo>+</mo></msup><mo separator="true">,</mo><msup><mi>A</mi><mo>+</mo></msup><mo>∣</mo><msup><mi>O</mi><mo>−</mo></msup><mo separator="true">,</mo><msup><mi>F</mi><mo>−</mo></msup><mo separator="true">,</mo><mi>q</mi><mo separator="true">,</mo><mi>c</mi><mo stretchy="false">)</mo><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+p_\theta(V^+,F^+,A^+\mid O^-,F^-,q,c).
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:1.0713em;vertical-align:-0.25em;"></span><span class="mord"><span class="mord mathnormal">p</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0278em;">θ</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.2222em;">V</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8213em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mbin mtight">+</span></span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1389em;">F</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8213em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mbin mtight">+</span></span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal">A</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8213em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mbin mtight">+</span></span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">∣</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1.0713em;vertical-align:-0.25em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0278em;">O</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8213em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mbin mtight">−</span></span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1389em;">F</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8213em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mbin mtight">−</span></span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal" style="margin-right:0.0359em;">q</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal">c</span><span class="mclose">)</span><span class="mord">.</span></span></span></span></span></eqn></section><p>这只是研究设想。需要处理传感器频率差异、接触事件的时间对齐，以及视频和触觉损失的尺度。最终应检验滑移检测、卡滞恢复和插入成功率，而不只看触觉预测误差。</p>
+<p>更进一步，接触事件是否应该触发一次高层重规划？如果视觉变化很小但指尖力突然变化，等待下一次常规相机更新可能太迟。</p>
+<h3 id="section-31">11.3 Agent 的进步来自决策，还是更丰富的执行工具？</h3>
+<p>拥有 <code>flip_tractor</code> 这类特定恢复技能，与只有通用移动和夹爪接口，任务难度不同。研究 Agent-native 能力时，需要明确技能来自预先编写、开发集搜索，还是当前交互生成。</p>
+<p>可以固定 WAM，分别测试无恢复、固定恢复库、可修改恢复程序和可跨任务保存程序的系统。记录失败类型、工具调用、交互预算和复用收益，才能判断 Agent 是否在积累新能力。</p>
+<p>对于一个失败，至少要区分：检测到了但工具不够、选错了恢复方式、恢复执行失败，以及已经不可恢复。这比只报告最终成功率更能指明下一步该提升模型还是补工具。</p>
+<h2 id="section-32">12. 和 Gemini Robotics 2.5、CEL、WAM 笔记怎样联系？</h2>
+<table>
+<thead>
+<tr>
+<th>工作</th>
+<th>主要可借鉴的机制</th>
+<th>需要保留的边界</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GR00T 2</td>
+<td>联合视频动作预训练、跨本体迁移、可引导的 WAM 接口</td>
+<td>基础模型、适配、RL 和 Agent 成绩分开</td>
+</tr>
+<tr>
+<td>Gemini Robotics 2.5</td>
+<td>ER 与动作模型分工，Argon 帮助数据生成和研发</td>
+<td>发布材料未完整披露训练配方</td>
+</tr>
+<tr>
+<td>CEL / FERT</td>
+<td>从群体真实失败中选择相关成功经验训练</td>
+<td>参数学习与当前任务的在线恢复分开</td>
+</tr>
+<tr>
+<td>VPP2 训练思路</td>
+<td>视频交互知识向动作迁移，重视指令跟随</td>
+<td>视频泛化与可执行动作泛化分别验证</td>
+</tr>
+</tbody>
+</table>
+<p>相关笔记：<a href="Gemini-Robotics-2.5.html">Gemini Robotics 2.5</a>、<a href="CEL.html">CEL</a>、<a href="WAM%E8%AE%AD%E7%BB%83%E5%8F%82%E8%80%83VPP2.html">WAM 训练参考：VPP2</a>、<a href="Metatron.html">Metatron</a>、<a href="Recova.html">Recova</a>。</p>
+<p>我更愿意把 GR00T 2 的贡献理解为一套可以拆开研究的学习与执行体系：大规模数据提供任务广度，少量示范修正本体差异，RL 提高接触精度，Agent 补记忆、验证和恢复。每一层都有自己的成本，也有自己的失败方式。</p>
+<p>如果做一个最小研究项目，我会先固定 WAM，研究高层如何通过语言、空间目标和接触反馈更可靠地调用它。再检查失败经验能否沉淀成可复用的恢复程序或新的动作训练样本。这样可以把一次执行中的纠错，与多次执行后的学习连起来。</p>
+<h2 id="section-33">13. 阅读与复现时保留这些口径</h2>
+<ul>
+<li>2B 是联合 Transformer 的参数量；白皮书主版与 Turbo 都是这个量级。</li>
+<li>没有目标任务的机器人遥操作，不等于没有目标机器人数据，也不等于人类示范完全没有动作追踪。</li>
+<li>95% 是筛选后的 Dexter-50 五样本微调结果。</li>
+<li>97%–98% 是加入纠正数据、Agent 与恢复技能后的真实装配系统结果。</li>
+<li>Visual steering 的汇总数是 benchmark 等权平均，还涉及额外的标记条件训练。</li>
+<li>RoboDojo 75.8% 的结果只覆盖 layout bank 0，不能作为三组 layout 的完整平均。</li>
+<li>Turbo 的预测延迟、WAM 规划频率、SONIC 控制频率与 PD 频率分别计算。</li>
+</ul>
+<p>截至本次核对，官方项目页仍标注代码将在 12 月提供。论文已足够讨论机制和实验，但完整复现还需要对应代码、权重、数据与训练配置。后续应以实际发布内容为准。</p>
+<footer><a href="../index.html#blog">← Back to Blog</a></footer></article></main></body></html>

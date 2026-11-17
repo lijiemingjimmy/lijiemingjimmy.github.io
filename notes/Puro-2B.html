@@ -1,0 +1,84 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Puro-2B｜普通实验室花多少钱，能从头训练一个语言模型？ · Jieming Li</title><link rel="stylesheet" href="../assets/styles.css"><link rel="stylesheet" href="../assets/notes.css"><link rel="stylesheet" href="vendor/katex/katex.min.css"></head><body class="note-page"><header class="note-nav"><a href="../index.html#blog">← Blog</a><a href="../index.html">Jieming Li</a></header><main class="note-layout"><aside class="note-outline"><p class="eyebrow">On this page</p><nav aria-label="目录"><ol><li><a href="#section-0">4,365 美元买到了什么？</a></li><li><a href="#section-1">第一笔节省来自硬件，能兑现多少取决于通信</a></li><li><a href="#section-2">FP8 加快每一步，MuonH 改变每一步学多少</a></li><li><a href="#section-3">数据已经买单了，为什么换个阅读顺序还能涨分？</a></li><li><a href="#section-4">“2.40 倍”是怎样得到的？</a></li></ol></nav></aside><article class="note-content" id="content"><p class="eyebrow">Research notebook · 研究笔记</p><h1 id="noteTitle">Puro-2B｜普通实验室花多少钱，能从头训练一个语言模型？</h1>
+<p>清华大学与鹏城实验室团队在 RTX 5090 集群上，从头训练了一组约 20 亿参数的语言模型，最长的一次用了 1.4 万亿 token。标题里的两个“5090”是个双关。真正值得算的是两笔账：花多少钱能让模型读完这些数据，以及读完以后，模型究竟学到了多少。<a href="https://training.farm/blog/puro/">作者博客，2026 年 10 月 18 日</a> · <a href="https://arxiv.org/abs/2608.27370v2">技术报告 v2</a></p>
+<h2 id="section-0">4,365 美元买到了什么？</h2>
+<table>
+<thead>
+<tr>
+<th>模型</th>
+<th style="text-align:right">正式预训练用量</th>
+<th style="text-align:right">按作者价格折算</th>
+<th style="text-align:right">15 项基准平均分</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Puro-2B，较短预算、随机数据顺序</td>
+<td style="text-align:right">约 14,262 个 5090 卡时</td>
+<td style="text-align:right">4,365 美元</td>
+<td style="text-align:right">55.54</td>
+</tr>
+<tr>
+<td>Qwen2-1.5B</td>
+<td style="text-align:right">—</td>
+<td style="text-align:right">—</td>
+<td style="text-align:right">55.14</td>
+</tr>
+<tr>
+<td>Puro-2B，完整配方</td>
+<td style="text-align:right">约 22,514 个 5090 卡时</td>
+<td style="text-align:right">6,891 美元</td>
+<td style="text-align:right">57.81</td>
+</tr>
+<tr>
+<td>Qwen2.5-1.5B</td>
+<td style="text-align:right">—</td>
+<td style="text-align:right">—</td>
+<td style="text-align:right">60.73</td>
+</tr>
+</tbody>
+</table>
+<p>这些分数能回答“能不能用几千美元训练出综合成绩相当的基座”。如果具体要拿来写代码，答案还要看单项。便宜版 Puro 的平均分比 Qwen2 高 0.40 分，但在 HumanEval 上是 20.73 对 27.44，在 BBH 上则是 41.14 对 31.73。两种模型可以靠不同的能力拿到相近的平均分。<a href="https://training.farm/blog/puro/">作者博客图 2 及逐项成绩</a></p>
+<p>成本也能自己算一遍。作者按 8 卡节点每月 12,000 元、每月 30 天折算，每卡每小时约 2.08 元。乘上完整版实际使用的 22,514 卡时，约为 46,905 元。较短训练的两个阶段分别使用 24 和 96 张卡，卡时便宜与手里有足够多的卡，是两个不同的部署条件。这张账单覆盖正式预训练，数据处理、挑配方的消融实验、后训练和研发人力另计。博客给 Qwen 列出的成本则来自等效算力估算，实际账单只有训练团队知道。<a href="https://training.farm/blog/puro/">成本对照表 7</a></p>
+<h2 id="section-1">第一笔节省来自硬件，能兑现多少取决于通信</h2>
+<p>假设一个训练步里，GPU 有一半时间都在等其他卡。即使显卡标称算力翻倍，也只能加快剩下那一半。5090 每卡只有 32 GB 显存，卡间走 PCIe。团队因此尽量把通信放在频率较低的环节，用数据并行分摊不同样本，用流水线并行把连续的网络层分给不同卡，再按各阶段的显存余量分配优化器状态。</p>
+<p>这里有一组可以对照的数。作者按自己的硬件价格算出，5090 每美元可买到的 BF16 <strong>峰值</strong>算力约为 H200 的 2.77 倍。要在训练里用到这部分算力，还要打通节点内的 PCIe P2P 和节点间的 GPUDirect RDMA。后者让其 24 卡测试中的 AllReduce 总线带宽从 8.87 增至 19.93 GB/s。前一个倍数描述采购条件，后两个数字才是通信实测。<a href="https://training.farm/blog/puro/">硬件与并行配置</a></p>
+<h2 id="section-2">FP8 加快每一步，MuonH 改变每一步学多少</h2>
+<p><strong>FP8 的收益要把速度和训练质量一起算。</strong> 一个张量里可能同时有很大和很小的数。分块量化让每一小块用自己的缩放尺度，主要线性层的矩阵乘法就能走 FP8，敏感操作和训练状态仍用较高精度。1.7B 模型的吞吐实测为 BF16 的 1.36 倍，但在五档规模的对照里，FP8 验证损失高了约 0.003–0.004。作者再问，若要求同样的损失，需要多算多少？用拟合结果扣掉这部分代价后，净效率约为 1.34 倍，相当于达到同等损失预计少用四分之一卡时。<a href="https://training.farm/blog/puro/">博客 FP8 实验</a></p>
+<p><strong>MuonH 处理的是相对更新幅度。</strong> 比如两组矩阵参数的范数分别为 1 和 10，同样更新 0.01，相对变化分别是 1% 和 0.1%。配置文件里填了同一个学习率，训练过程中的实际相对步长仍可能相差十倍。作者用有效学习率 ELR 描述这个量，可理解为更新范数除以权重范数。MuonH 归一化矩阵更新，每次走完一步再把权重投影回固定半径。这样，对它负责的矩阵，投影前的相对步长就能直接由学习率调度控制。其他参数组用 AdamW。<a href="https://training.farm/blog/puro/">博客 MuonH 实验</a></p>
+<p>有个对照比“换优化器后涨分了”更能解释原因。作者在 170M 模型上让普通 Muon 的权重范数自由变化，只动态调节学习率，使 ELR 轨迹跟随 MuonH，两条损失曲线几乎重合。另一个跨五档规模的实验比较 MuonH 和常规调参后的 Muon，拟合结果是前者达到同一损失所需的计算量约为后者的 84%。两个实验的对照组不同，前者检验机制，后者估计实际配方的收益。<a href="https://arxiv.org/abs/2608.27370v2">技术报告</a></p>
+<h2 id="section-3">数据已经买单了，为什么换个阅读顺序还能涨分？</h2>
+<p>先考虑一个具体矛盾。高质量数学题被排到最后，希望模型临近训练结束时多学一点推理。恰好这时学习率也衰减到了最低。模型虽然读到了好题，参数却只能移动很小一步。Puro 把<strong>选什么数据、什么时候喂、那时更新多大</strong>放进同一组实验。</p>
+<p>选数据时，作者从同一检查点出发，用相同配置分别在各个候选来源或质量分段上短训，再测数学、代码、中文和通用能力。在这些代理实验中，有些数据能拉高代码分，同时拉低通用分。作者据此调整第二阶段的领域占比。排序时则在每个来源内部把高分样本放到后面，再按各来源的相对进度混合。这样，训练后段仍有多个领域，测到的顺序效应也较少受到领域突然切换的干扰。<a href="https://training.farm/blog/puro/">博客图 11、14、15</a></p>
+<p>最后一步叫 <strong>CMA（Curriculum Model Averaging，课程模型平均）</strong>。作者从按课程顺序训练的第 218,000 步检查点出发，把学习率固定在当时的值，继续读后面的高质量样本。训练末端取六个检查点，对相应位置的权重求算术平均。部署时得到一个模型。<a href="https://training.farm/blog/puro/">博客图 12–13</a></p>
+<table>
+<thead>
+<tr>
+<th>同一份第二阶段数据，从同一个第一阶段检查点出发</th>
+<th style="text-align:right">最后一个检查点</th>
+<th style="text-align:right">末端参数平均</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>随机顺序，学习率线性衰减</td>
+<td style="text-align:right">55.99</td>
+<td style="text-align:right">55.57</td>
+</tr>
+<tr>
+<td>源内按质量排序，学习率线性衰减</td>
+<td style="text-align:right">57.17</td>
+<td style="text-align:right">57.18</td>
+</tr>
+<tr>
+<td>源内按质量排序，从 218k 起固定学习率</td>
+<td style="text-align:right">57.12</td>
+<td style="text-align:right">57.81</td>
+</tr>
+</tbody>
+</table>
+<p>横着读表，直接在衰减轨迹上平均，收益接近零，甚至会掉分。竖着读第一列，只改数据顺序，已经从 55.99 升到 57.17。再看最后一行，固定学习率续训的末个检查点只有 57.12，平均后才达到 57.81。<strong>在这组实验里，课程排序本身有效，参数平均的收益则取决于取哪段训练轨迹。</strong> 表中的 55.99 是这组等数据消融的随机顺序结果，开头的 55.54 来自较短预算。<a href="https://training.farm/blog/puro/">消融图 13</a></p>
+<h2 id="section-4">“2.40 倍”是怎样得到的？</h2>
+<p>作者从同一第一阶段检查点出发，让随机数据顺序的模型在几个不同预算下完成第二阶段，然后拟合总成本与 15 项平均分的关系。完整版 CMA 在约 6,900 美元时得到 57.81 分。沿随机顺序的曲线外推，同样的分数对应约 16,600 美元。两者相除才有 2.40 倍，分子是预测成本，分母来自实际卡时。这条曲线最适合回答这套模型、数据和评测下的预算问题。<a href="https://training.farm/blog/puro/">博客图 3、13</a></p>
+<p>这也解释了为什么不宜把全文的倍数直接连乘。2.77 衡量每美元峰值算力，1.34 衡量 FP8 达到相同损失的预计卡时收益，1.19 衡量优化器达到相同损失的计算量比，2.40 衡量达到相同下游平均分的估计成本比。要核算一次完整训练，最直接的证据仍是表里的卡时和对应模型的实测分数。</p>
+<p>对研究来说，这套配方还回答了一个比“训得便宜”更有意思的问题。拿课程训练和随机顺序训练得到的两个基座，用同一套流程微调，预训练顺序带来的差别还剩多少？作者的 Tulu-3 微调对照中，CMA 初始化的 15 项平均分仍高 1.17 个百分点，IFEval 高 1.36 个百分点。公开中间权重的价值就在这里：研究者能从同一个训练节点改一个决定，一路追踪到后训练的结果。<a href="https://training.farm/blog/puro/">作者博客图 16</a> · <a href="https://huggingface.co/collections/thu-pacman/puro-2b">模型与中间权重</a> · <a href="https://github.com/thu-pacman/Puro-Megatron/blob/puro-2b/examples/puro/run_puro_2b.sh">训练脚本</a> · <a href="https://huggingface.co/datasets/thu-pacman/Puro-2B">训练数据</a></p>
+<footer><a href="../index.html#blog">← Back to Blog</a></footer></article></main></body></html>

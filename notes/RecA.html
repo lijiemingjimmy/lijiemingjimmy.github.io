@@ -2,7 +2,7 @@
 <p>一个模型可以看图回答“这是一颗黄色西兰花”，但让它画黄色西兰花时，它仍然可能画成绿色。识别了对象、属性和位置关系，并不意味着生成时能把这些信息准确落实到图像中。</p>
 <p><strong>Reconstruction Alignment（RecA）的做法是，把图像经过理解编码器得到的视觉特征作为生成条件，再让模型重建这张图。它希望通过这项自监督任务，改善已有语义表征到图像输出之间的映射。</strong></p>
 <p>论文：<strong>Reconstruction Alignment Improves Unified Multimodal Models</strong>，Ji Xie、Trevor Darrell、Luke Zettlemoyer、XuDong Wang，UC Berkeley、University of Washington、Duke University，ICLR 2026。<a href="https://arxiv.org/html/2509.07295v4">论文 v4</a>｜<a href="https://reconstruction-alignment.github.io/">项目主页</a>｜<a href="https://github.com/HorizonWind2004/reconstruction-alignment">代码</a>｜<a href="https://github.com/HorizonWind2004/reconstruction-alignment/blob/main/REPRODUCE_GUIDE_CN.md">作者中文复现指南</a></p>
-<p>本文根据提供的解读整理，并对照论文 v4、项目页和复现指南核查。实验数值以这一版本为准；对视频世界模型和 VLA 的连接是后续研究思考。</p>
+<p>实验数值以这一版本为准；对视频世界模型和 VLA 的连接是后续研究思考。</p>
 <h2 id="section-0">1. 先分清 UMM 和 RecA</h2>
 <p>UMM 是 Unified Multimodal Model，指把多模态理解与生成放进统一框架的模型。以图像为例，它可以同时支持：</p>
 <table>

@@ -4,7 +4,7 @@ export async function setupNotes() {
   if (!list || !search || !count) return;
   list.classList.add('notes-grid');
   try {
-    const response = await fetch(new URL('./notes-index.json', import.meta.url));
+    const response = await fetch(new URL('./notes-index.json?v=20261117', import.meta.url));
     if (!response.ok) throw new Error('Could not load notes');
     const notes = await response.json();
     let limit = 24;
@@ -12,7 +12,7 @@ export async function setupNotes() {
       const query = search.value.trim().toLocaleLowerCase();
       const results = notes.filter(note => `${note.title} ${note.filename} ${note.summary}`.toLocaleLowerCase().includes(query));
       count.textContent = `${results.length} / ${notes.length} notes`;
-      list.innerHTML = results.length ? results.slice(0, limit).map(note => `<article class="note-card"><h2><a href="${escape(note.href)}">${escape(note.title)}</a></h2><p>${escape(note.summary)}</p><a class="read-link" href="${escape(note.href)}">Read note →</a></article>`).join('') : '<p>No matching notes. Try another keyword.</p>';
+      list.innerHTML = results.length ? results.slice(0, limit).map(note => `<article class="note-card"><h2><a href="${escape(note.href)}">${escape(note.title)}</a></h2><p>${escape(note.summary)}</p><a class="read-link" href="${escape(note.href)}">Read note →</a> · <a href="${escape(note.markdown)}" download>Markdown ↓</a></article>`).join('') : '<p>No matching notes. Try another keyword.</p>';
     }
     const more = document.createElement('button');
     more.type = 'button'; more.className = 'notes-more'; more.textContent = 'Load more notes';

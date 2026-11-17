@@ -2,7 +2,7 @@
 <p>拧开瓶盖时，手指的位置很重要，但位置相同不代表操作相同。夹得太松，转动时会打滑；夹得太紧，又可能让物体变形。普通视频能够记录手怎样运动，却很难确定手指到底用了多大的力。</p>
 <p><strong>FACT 想把人类示范里的运动和接触一起学下来：先预测视觉运动和粗动作，再让未来力与动作共同生成，利用实际触觉反馈继续修正执行。</strong></p>
 <p>论文：<strong>FACT: A Multimodal Force–Action–Track Foundation Model for Human-to-Robot Dexterity</strong>，2026 年 10 月 13 日提交，来自 Stanford、University of Michigan 与 Microsoft Research。<a href="https://arxiv.org/abs/2610.19155">论文</a>｜<a href="https://arxiv.org/html/2610.19155v1">全文 v1</a>｜<a href="https://fact-1-0.github.io/">项目主页</a></p>
-<p>本文根据提供的解读整理，并对照论文 v1 核查方法、数据与实验。最后的失败检测和 Agent 连接是研究推演。</p>
+<p>最后的失败检测和 Agent 连接是研究推演。</p>
 <h2 id="section-0">1. 它要跨过两道门槛</h2>
 <p>第一道是<strong>人手和机器人的运动学不同</strong>。人的手腕、手指姿态，不能直接作为机械臂和灵巧手的控制指令。关节数、长度、可达范围和接触位置都会影响动作是否有效。</p>
 <p>第二道是<strong>视频缺少明确的接触力信息</strong>。两个示范看起来都在捏住物体，实际夹持力、负载和摩擦条件可能完全不同。只模仿视觉轨迹，容易学到动作外形，却错过真正完成操作的接触过程。</p>

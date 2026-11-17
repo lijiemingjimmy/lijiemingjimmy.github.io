@@ -1,0 +1,237 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>RAFT：VLA 微调时，怎样保住任务相关的理解能力？ · Jieming Li</title><link rel="stylesheet" href="../assets/styles.css"><link rel="stylesheet" href="../assets/notes.css"><link rel="stylesheet" href="vendor/katex/katex.min.css"></head><body class="note-page"><header class="note-nav"><a href="../index.html#blog">← Blog</a><a href="../index.html">Jieming Li</a></header><main class="note-layout"><aside class="note-outline"><p class="eyebrow">On this page</p><nav aria-label="目录"><ol><li><a href="#section-0">1. 微调到底可能把什么学偏？</a></li><li><a href="#section-1">2. Reasoning 在这里具体是什么？</a></li><li><a href="#section-2">3. 两个训练阶段怎么接起来？</a></li><li><a href="#section-6">4. 为什么“冻结推理 LoRA”不等于“推理能力永远不变”？</a></li><li><a href="#section-7">5. 实验效果：最强证据来自哪里？</a></li><li><a href="#section-11">6. 消融比一句“先理解再行动”更有信息量</a></li><li><a href="#section-12">7. 表征分析支持什么？</a></li><li><a href="#section-13">8. 和 WAM、灵巧操作有什么关系？</a></li><li><a href="#section-16">9. 如果沿着这篇文章做研究，我会先补哪些对照？</a></li></ol></nav></aside><article class="note-content" id="content"><p class="eyebrow">Research notebook · 研究笔记</p><h1 id="noteTitle">RAFT：VLA 微调时，怎样保住任务相关的理解能力？</h1>
+<p>论文：<a href="https://arxiv.org/abs/2611.04368v1">RAFT: Reasoning-Aligned Fine-Tuning Improves Robustness of VLA Post-Training</a><br>
+作者：Shresth Grover、Andrey Kolobov、Dhruv Shah；Princeton / Microsoft Research。2026 年 11 月 3 日提交。<br>
+资料：<a href="https://arxiv.org/html/2611.04368v1">原文 HTML</a> · <a href="https://princeton-prism.github.io/RAFT/">项目主页</a> · <a href="https://github.com/princeton-prism/RAFT">代码入口</a></p>
+<p>这篇文章关心一个很实际的问题：<strong>模型在固定桌面上越训越熟，为什么换个背景、换种颜色，反而不会做了？</strong></p>
+<p>RAFT 的处理方式是先用任务相关的视觉与空间标注训练一个 LoRA，再冻结这个 LoRA，用示范训练动作。它希望让少量动作数据适配机器人的同时，保留一部分对目标物体、位置关系和运动路径的关注。</p>
+<p>下面根据提供的解读整理，并对照 v1 原文核对关键结论。研究建议与公式中的解释性简化会单独说明。</p>
+<h2 id="section-0">1. 微调到底可能把什么学偏？</h2>
+<p>假设机器人需要把杯子放进盒子，50 条示范里杯子总在左侧，盒子总在右侧，桌面纹理也几乎不变。</p>
+<p>要拟合这些示范，模型可以学会识别杯子和盒子，再根据相对位置行动；也可以主要记住某些图像特征出现时应该输出哪段动作。在这些训练样本上，两种办法都可能得到很低的动作误差。</p>
+<p>区别要到环境变化后才显现：换一张桌布，第一种策略仍然能找到杯子，第二种策略依赖的视觉关联却可能失效。</p>
+<p>用一个简化的表示来理解：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mi>o</mi><mo>=</mo><mo stretchy="false">(</mo><mi>z</mi><mo separator="true">,</mo><mi>b</mi><mo stretchy="false">)</mo><mo separator="true">,</mo><mspace width="2em"/><mi>a</mi><mo>=</mo><mi>f</mi><mo stretchy="false">(</mo><mi>z</mi><mo separator="true">,</mo><mi>l</mi><mo stretchy="false">)</mo><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+o=(z,b),\qquad a=f(z,l).
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.4306em;"></span><span class="mord mathnormal">o</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mopen">(</span><span class="mord mathnormal" style="margin-right:0.044em;">z</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal">b</span><span class="mclose">)</span><span class="mpunct">,</span><span class="mspace" style="margin-right:2em;"></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal">a</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal" style="margin-right:0.1076em;">f</span><span class="mopen">(</span><span class="mord mathnormal" style="margin-right:0.044em;">z</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal" style="margin-right:0.0197em;">l</span><span class="mclose">)</span><span class="mord">.</span></span></span></span></span></eqn></section><p>这里 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>z</mi></mrow><annotation encoding="application/x-tex">z</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.4306em;"></span><span class="mord mathnormal" style="margin-right:0.044em;">z</span></span></span></span></eq> 是任务相关状态，例如目标位置、夹爪位置；<eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>b</mi></mrow><annotation encoding="application/x-tex">b</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6944em;"></span><span class="mord mathnormal">b</span></span></span></span></eq> 是背景等非必要因素；<eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>l</mi></mrow><annotation encoding="application/x-tex">l</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6944em;"></span><span class="mord mathnormal" style="margin-right:0.0197em;">l</span></span></span></span></eq> 是指令。真实任务主要依赖 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>z</mi></mrow><annotation encoding="application/x-tex">z</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.4306em;"></span><span class="mord mathnormal" style="margin-right:0.044em;">z</span></span></span></span></eq>，但在有限示范中，<eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>b</mi></mrow><annotation encoding="application/x-tex">b</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6944em;"></span><span class="mord mathnormal">b</span></span></span></span></eq> 也可能与动作高度相关。仅凭动作监督，模型未必能分清两者。</p>
+<p>这至少涉及三件事：数据没有覆盖足够多的变化，模型使用了容易拟合的视觉捷径，以及微调改变了预训练表征。它们可以同时发生。因此，“微调后更脆”值得研究，但将所有失败都归结为灾难性遗忘，会把问题说得过窄。</p>
+<p>RAFT 的切入点是增加一层监督：<strong>让模型在学动作前，先明确当前任务应该关注哪些信息。</strong></p>
+<h2 id="section-1">2. Reasoning 在这里具体是什么？</h2>
+<p>看到 Reasoning 很容易想到长篇思维链。RAFT 使用的监督相当具体：目标对象、物体框、抓取点、目标点、空间描述，以及图像平面中的运动轨迹。</p>
+<p>例如“把杯子放进碗里”，监督可以包含：</p>
+<table>
+<thead>
+<tr>
+<th>监督形式</th>
+<th>想让模型表达的信息</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>物体描述 / VQA</td>
+<td>应当操作哪个杯子，放进哪个容器</td>
+</tr>
+<tr>
+<td>Bounding box</td>
+<td>杯子与碗分别位于图像哪里</td>
+</tr>
+<tr>
+<td>Keypoints</td>
+<td>抓取位置、抬升位置和放置位置</td>
+</tr>
+<tr>
+<td>Spatial description</td>
+<td>杯子在碗左侧，夹爪需要先靠近杯子</td>
+</tr>
+<tr>
+<td>Trajectory trace</td>
+<td>图像中从当前位置到抓取点、再到目标的路径</td>
+</tr>
+</tbody>
+</table>
+<p>标注由 Gemini 3.1 Pro 生成，随后序列化成 token，让模型学习生成这些目标。<a href="https://arxiv.org/html/2611.04368v1#S6.SS1">方法与标注格式</a></p>
+<p>这些标注的作用可以理解为给视觉表征加上任务约束：模型不能只记一个动作结果，还要表达与动作有关的对象和空间关系。</p>
+<p>这里的二维轨迹提供的是视觉上的运动提示。把它转成真实机械臂动作，还需要处理深度、运动学、碰撞和接触。RAFT 的动作学习阶段承担后续适配。</p>
+<h2 id="section-2">3. 两个训练阶段怎么接起来？</h2>
+<h3 id="section-3">第一阶段：用推理监督训练 LoRA</h3>
+<p>设预训练模型参数为 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>θ</mi><mn>0</mn></msub></mrow><annotation encoding="application/x-tex">\theta_0</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8444em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0278em;">θ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:-0.0278em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">0</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span></eq>，LoRA 参数为 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>ϕ</mi></mrow><annotation encoding="application/x-tex">\phi</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8889em;vertical-align:-0.1944em;"></span><span class="mord mathnormal">ϕ</span></span></span></span></eq>，推理目标序列为 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>r</mi></mrow><annotation encoding="application/x-tex">r</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.4306em;"></span><span class="mord mathnormal" style="margin-right:0.0278em;">r</span></span></span></span></eq>。第一阶段可以写成：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msup><mi>ϕ</mi><mo>∗</mo></msup><mo>=</mo><mi>arg</mi><mo>⁡</mo><munder><mrow><mi>min</mi><mo>⁡</mo></mrow><mi>ϕ</mi></munder><mo>−</mo><msub><mi mathvariant="double-struck">E</mi><mrow><mo stretchy="false">(</mo><mi>o</mi><mo separator="true">,</mo><mi>l</mi><mo separator="true">,</mo><mi>r</mi><mo stretchy="false">)</mo></mrow></msub><munder><mo>∑</mo><mi>j</mi></munder><mi>log</mi><mo>⁡</mo><msub><mi>p</mi><mrow><msub><mi>θ</mi><mn>0</mn></msub><mo separator="true">,</mo><mi>ϕ</mi></mrow></msub><mo stretchy="false">(</mo><msub><mi>r</mi><mi>j</mi></msub><mo>∣</mo><mi>o</mi><mo separator="true">,</mo><mi>l</mi><mo separator="true">,</mo><msub><mi>r</mi><mrow><mo>&lt;</mo><mi>j</mi></mrow></msub><mo stretchy="false">)</mo><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+\phi^*=\arg\min_\phi
+-\mathbb E_{(o,l,r)}
+\sum_j\log p_{\theta_0,\phi}(r_j\mid o,l,r_{&lt;j}).
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.9331em;vertical-align:-0.1944em;"></span><span class="mord"><span class="mord mathnormal">ϕ</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.7387em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mbin mtight">∗</span></span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:2.4638em;vertical-align:-1.4138em;"></span><span class="mop">ar<span style="margin-right:0.0139em;">g</span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mop op-limits"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.6679em;"><span style="top:-2.3479em;margin-left:0em;"><span class="pstrut" style="height:3em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">ϕ</span></span></span><span style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span><span class="mop">min</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.8882em;"><span></span></span></span></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord">−</span><span class="mord"><span class="mord mathbb">E</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3448em;"><span style="top:-2.5198em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mopen mtight">(</span><span class="mord mathnormal mtight">o</span><span class="mpunct mtight">,</span><span class="mord mathnormal mtight" style="margin-right:0.0197em;">l</span><span class="mpunct mtight">,</span><span class="mord mathnormal mtight" style="margin-right:0.0278em;">r</span><span class="mclose mtight">)</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.3552em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mop op-limits"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.05em;"><span style="top:-1.8723em;margin-left:0em;"><span class="pstrut" style="height:3.05em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0572em;">j</span></span></span><span style="top:-3.05em;"><span class="pstrut" style="height:3.05em;"></span><span><span class="mop op-symbol large-op">∑</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:1.4138em;"><span></span></span></span></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mop">lo<span style="margin-right:0.0139em;">g</span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal">p</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right:0.0278em;">θ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3173em;"><span style="top:-2.357em;margin-left:-0.0278em;margin-right:0.0714em;"><span class="pstrut" style="height:2.5em;"></span><span class="katex-sizing reset-size3 size1 mtight"><span class="mord mtight">0</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.143em;"><span></span></span></span></span></span></span><span class="mpunct mtight">,</span><span class="mord mathnormal mtight">ϕ</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0278em;">r</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:-0.0278em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0572em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">∣</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1.0361em;vertical-align:-0.2861em;"></span><span class="mord mathnormal">o</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal" style="margin-right:0.0197em;">l</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0278em;">r</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:-0.0278em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mrel mtight">&lt;</span><span class="mord mathnormal mtight" style="margin-right:0.0572em;">j</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span><span class="mclose">)</span><span class="mord">.</span></span></span></span></span></eqn></section><p>预训练主体固定，只更新 LoRA。训练目标是让模型更好地表达当前任务所需的对象、位置和路径信息。</p>
+<h3 id="section-4">第二阶段：冻结 LoRA，适配动作</h3>
+<p>保留 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msup><mi>ϕ</mi><mo>∗</mo></msup></mrow><annotation encoding="application/x-tex">\phi^*</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8889em;vertical-align:-0.1944em;"></span><span class="mord"><span class="mord mathnormal">ϕ</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.6887em;"><span style="top:-3.063em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mbin mtight">∗</span></span></span></span></span></span></span></span></span></span></span></eq>，随后用机器人示范更新动作策略中的可训练参数 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>θ</mi></mrow><annotation encoding="application/x-tex">\theta</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6944em;"></span><span class="mord mathnormal" style="margin-right:0.0278em;">θ</span></span></span></span></eq>：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msup><mi>θ</mi><mo>∗</mo></msup><mo>=</mo><mi>arg</mi><mo>⁡</mo><munder><mrow><mi>min</mi><mo>⁡</mo></mrow><mi>θ</mi></munder><msub><mi mathvariant="double-struck">E</mi><mrow><mo stretchy="false">(</mo><mi>o</mi><mo separator="true">,</mo><mi>l</mi><mo separator="true">,</mo><mi>a</mi><mo stretchy="false">)</mo><mo>∼</mo><mi mathvariant="script">D</mi></mrow></msub><msub><mi mathvariant="normal">ℓ</mi><mrow><mi mathvariant="normal">a</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">n</mi></mrow></msub><mo stretchy="false">(</mo><mi>θ</mi><mo separator="true">,</mo><msup><mi>ϕ</mi><mo>∗</mo></msup><mo separator="true">;</mo><mi>o</mi><mo separator="true">,</mo><mi>l</mi><mo separator="true">,</mo><mi>a</mi><mo stretchy="false">)</mo><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+\theta^*=\arg\min_\theta
+\mathbb E_{(o,l,a)\sim\mathcal D}
+\ell_{\mathrm{action}}(\theta,\phi^*;o,l,a).
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.7387em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0278em;">θ</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.7387em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mbin mtight">∗</span></span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1.5021em;vertical-align:-0.7521em;"></span><span class="mop">ar<span style="margin-right:0.0139em;">g</span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mop op-limits"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.6679em;"><span style="top:-2.3479em;margin-left:0em;"><span class="pstrut" style="height:3em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0278em;">θ</span></span></span><span style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span><span class="mop">min</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.7521em;"><span></span></span></span></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathbb">E</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3448em;"><span style="top:-2.5198em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mopen mtight">(</span><span class="mord mathnormal mtight">o</span><span class="mpunct mtight">,</span><span class="mord mathnormal mtight" style="margin-right:0.0197em;">l</span><span class="mpunct mtight">,</span><span class="mord mathnormal mtight">a</span><span class="mclose mtight">)</span><span class="mrel mtight">∼</span><span class="mord mathcal mtight" style="margin-right:0.0278em;">D</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.3552em;"><span></span></span></span></span></span></span><span class="mord"><span class="mord">ℓ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3175em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">action</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mopen">(</span><span class="mord mathnormal" style="margin-right:0.0278em;">θ</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal">ϕ</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.7387em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mbin mtight">∗</span></span></span></span></span></span></span></span><span class="mpunct">;</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal">o</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal" style="margin-right:0.0197em;">l</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal">a</span><span class="mclose">)</span><span class="mord">.</span></span></span></span></span></eqn></section><p>这里用通用的 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi mathvariant="normal">ℓ</mi><mrow><mi mathvariant="normal">a</mi><mi mathvariant="normal">c</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">n</mi></mrow></msub></mrow><annotation encoding="application/x-tex">\ell_{\mathrm{action}}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8444em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord">ℓ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3175em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">action</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span></eq>，因为具体目标取决于底层策略的动作表示和训练方式。对于 flow-based action expert，直接写成离散动作 token 的交叉熵会造成误解。</p>
+<p>部署时，训练好的适配器继续参与模型计算，策略直接预测动作。它的主要收益来自训练时的表征约束，不能据此假定执行每个动作前都会生成一段可读推理。</p>
+<h3 id="section-5">哪些参数真正被冻结？</h3>
+<p>在论文的 MolmoBot 配置中：</p>
+<table>
+<thead>
+<tr>
+<th>模块</th>
+<th>Stage I</th>
+<th>Stage II</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>原始 SigLIP 视觉编码器</td>
+<td>冻结</td>
+<td>冻结</td>
+</tr>
+<tr>
+<td>视觉与语言模块中的推理 LoRA</td>
+<td>训练</td>
+<td>冻结并保留</td>
+</tr>
+<tr>
+<td>语言模型主体、动作专家、投影层</td>
+<td>主体冻结</td>
+<td>训练</td>
+</tr>
+</tbody>
+</table>
+<p>Stage I 约训练 90.4M 参数，Stage II 约训练 3.09B 参数。因此 RAFT 第二阶段仍然是较大规模的模型适配。<a href="https://arxiv.org/html/2611.04368v1#S6">附录训练配置</a></p>
+<h2 id="section-6">4. 为什么“冻结推理 LoRA”不等于“推理能力永远不变”？</h2>
+<p>这是理解这篇文章最值得停下来想的一步。</p>
+<p>用一个简化的 LoRA 线性层表示：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msup><mi>h</mi><mo mathvariant="normal" lspace="0em" rspace="0em">′</mo></msup><mo>=</mo><mo stretchy="false">(</mo><msub><mi>W</mi><mi>θ</mi></msub><mo>+</mo><mi mathvariant="normal">Δ</mi><msub><mi>W</mi><msup><mi>ϕ</mi><mo>∗</mo></msup></msub><mo stretchy="false">)</mo><mi>h</mi><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+h&#x27;=(W_\theta+\Delta W_{\phi^*})h.
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8019em;"></span><span class="mord"><span class="mord mathnormal">h</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8019em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight">′</span></span></span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1389em;">W</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:-0.1389em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0278em;">θ</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1.0361em;vertical-align:-0.2861em;"></span><span class="mord">Δ</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1389em;">W</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:-0.1389em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathnormal mtight">ϕ</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.6183em;"><span style="top:-2.786em;margin-right:0.0714em;"><span class="pstrut" style="height:2.5em;"></span><span class="katex-sizing reset-size3 size1 mtight"><span class="mbin mtight">∗</span></span></span></span></span></span></span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span><span class="mclose">)</span><span class="mord mathnormal">h</span><span class="mord">.</span></span></span></span></span></eqn></section><p>虽然 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi mathvariant="normal">Δ</mi><msub><mi>W</mi><msup><mi>ϕ</mi><mo>∗</mo></msup></msub></mrow><annotation encoding="application/x-tex">\Delta W_{\phi^*}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.9694em;vertical-align:-0.2861em;"></span><span class="mord">Δ</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1389em;">W</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:-0.1389em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathnormal mtight">ϕ</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.6183em;"><span style="top:-2.786em;margin-right:0.0714em;"><span class="pstrut" style="height:2.5em;"></span><span class="katex-sizing reset-size3 size1 mtight"><span class="mbin mtight">∗</span></span></span></span></span></span></span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span></span></span></span></eq> 被固定，第二阶段仍可能更新 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>W</mi><mi>θ</mi></msub></mrow><annotation encoding="application/x-tex">W_\theta</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1389em;">W</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:-0.1389em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0278em;">θ</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span></eq>，上游产生的 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>h</mi></mrow><annotation encoding="application/x-tex">h</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6944em;"></span><span class="mord mathnormal">h</span></span></span></span></eq> 也可能变化。整个层的输入输出关系当然还会变。</p>
+<p>冻结所提供的直接保证是：动作梯度不会修改这组 LoRA 参数。它给后续优化保留了一个由推理监督学出的固定组成部分；最终是否保住了任务相关能力，仍要通过行为实验和表征分析检验。</p>
+<p>这个区别也解释了为什么 RAFT 可以有效，却不构成“彻底解决遗忘”的数学保证。固定一个参数子集，与固定一个完整功能，是两种不同约束。</p>
+<h2 id="section-7">5. 实验效果：最强证据来自哪里？</h2>
+<h3 id="section-8">DROID：训练场景差不多，环境变化后差距很大</h3>
+<p>MolmoBot 使用 50 条抓取放置示范后，结果为：</p>
+<table>
+<thead>
+<tr>
+<th>评测范围</th>
+<th style="text-align:right">Plain FT</th>
+<th style="text-align:right">RAFT</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ID，原始训练场景</td>
+<td style="text-align:right">约 60%</td>
+<td style="text-align:right">约 63%</td>
+</tr>
+<tr>
+<td>OOD，颜色 / 干扰物 / 背景变化合并</td>
+<td style="text-align:right">27.9%</td>
+<td style="text-align:right">75.0%</td>
+</tr>
+</tbody>
+</table>
+<p>OOD 共 68 次测试：对象变化 24 次、干扰物 24 次、背景变化 20 次。因此 75.0% 是这些测试合并的结果，不应理解成每一种变化都达到 75%。<a href="https://arxiv.org/html/2611.04368v1#S6.SS4">真机实验及评测协议</a></p>
+<p>从提供的结果可以算出，OOD 提升约 47.1 个百分点，远大于 ID 的约 3 个百分点。对这项任务而言，RAFT 的主要价值体现在环境变化后的稳定性。</p>
+<p>这个现象也说明，只比较原始场景的成功率，会漏掉后训练方法的重要差别。</p>
+<h3 id="section-9">YAM：看完整双臂流程是否完成</h3>
+<p>YAM 使用 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>π</mi><mn>0.5</mn></msub></mrow><annotation encoding="application/x-tex">\pi_{0.5}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.5806em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0359em;">π</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:-0.0359em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight">0.5</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span></eq> 和 100 条示范。一只手打开并保持盒盖，另一只手抓取物体并放入盒子。RAFT 完整任务平均成功率为 70%，最强对照 DeLock 为 36%。</p>
+<p>这里的平均包含 ID 和多类 OOD 条件，统计范围与 DROID 的纯 OOD 合并结果不同。两项结果应分别理解。</p>
+<p>对这种任务，单独记录“盒盖打开了没有”还不够。保持盒盖、抓取、转移和放置都可能出错，完整任务成功率才反映整段行为是否衔接起来。<a href="https://arxiv.org/html/2611.04368v1#S4">真机结果</a></p>
+<h3 id="section-10">仿真：提升更温和，也更容易拆解原因</h3>
+<p>Pick-and-place 五类测试平均成功率为 83.21% 对 79.62%；OOD-object 为 43.40% 对 35.85%。</p>
+<p>平均提升约 3.6 个百分点，同时新物体成功率仍低于一半。这意味着 RAFT 的收益与任务、基础模型和扰动类型有关，真机上的大幅提升不能直接当成所有场景的预期收益。</p>
+<h2 id="section-11">6. 消融比一句“先理解再行动”更有信息量</h2>
+<p>下表整理同一仿真抓取放置设置中的结果，平均包含 ID、光照、纹理、物体和指令五类测试。</p>
+<table>
+<thead>
+<tr>
+<th>训练方式</th>
+<th style="text-align:right">平均成功率</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>推理与动作联合训练</td>
+<td style="text-align:right">63.21%</td>
+</tr>
+<tr>
+<td>先推理后动作，第二阶段继续更新 LoRA</td>
+<td style="text-align:right">73.96%</td>
+</tr>
+<tr>
+<td>普通动作微调</td>
+<td style="text-align:right">79.62%</td>
+</tr>
+<tr>
+<td>普通动作微调，冻结视觉编码器</td>
+<td style="text-align:right">79.62%</td>
+</tr>
+<tr>
+<td>RAFT：先推理，冻结 LoRA，再学动作</td>
+<td style="text-align:right">83.21%</td>
+</tr>
+</tbody>
+</table>
+<p>来源：<a href="https://arxiv.org/html/2611.04368v1#S8">附录消融</a>。</p>
+<p><strong>第一，增加推理标签本身不保证收益。</strong> 联合训练在这里表现较差，说明监督如何组织、更新哪些参数，同样会影响结果。联合训练的失败仍然只对应作者测试的配方，无法排除其他损失配比和调度方式。</p>
+<p><strong>第二，保护视觉编码器可以解释一部分收益。</strong> 在 OOD-object 上，冻结视觉编码器的普通 FT 达到 40.57%，RAFT 为 43.40%。两者相差约 2.8 个百分点，比 RAFT 相对原始 Plain FT 的差距更小。解释收益时，需要把视觉冻结和推理监督两项设计分开。</p>
+<p><strong>第三，监督形式应当由任务决定。</strong> OOD-object 上，轨迹监督达到 45.28%，完整推理为 43.40%。这支持优先比较哪些信息有用，而不是直接把完整标注当作最优选择。差距较小时，还需要结合试验数量和训练波动判断稳定性。</p>
+<p>我更关心的后续问题是：如果只标关键点、只标对象关系，就能取得接近的效果，是否可以省掉复杂标注的生成和清洗成本？这需要等预算实验，现有结果只提供了方向。</p>
+<h2 id="section-12">7. 表征分析支持什么？</h2>
+<p>论文观察到 RAFT 更关注目标、夹爪等区域，物体身份也更容易从中后层特征中线性解码。提供的解读中，物体身份 Balanced Accuracy 约为 0.51–0.53，普通 FT 约为 0.45。</p>
+<p>这与“保留了更多任务相关信息”的解释一致。不过，一个信息能被探针读出来，还需要进一步证明策略实际使用它来控制动作。注意力集中在物体上，也不能独立证明这一区域对决策有因果作用。</p>
+<p>附录还有两个会影响解读的细节：所谓进度标签是轨迹时间四等分；探针留出的是探针训练中的 episode，这些 episode 曾参与策略训练。因此该分析衡量的是特征可解码性，不能直接当成未见任务阶段理解的证据。<a href="https://arxiv.org/html/2611.04368v1#S10">探针协议</a></p>
+<p>一个可以补充的实验是：固定画面和物体布局，只改变语言指定的目标。如果模型随指令改变抓取对象，而且这种能力在动作微调后仍然保持，就能更直接地检验任务语义是否影响行为。</p>
+<p>还可以遮挡目标、遮挡背景，比较动作变化是否符合预期。上述实验是进一步验证机制的建议。</p>
+<h2 id="section-13">8. 和 WAM、灵巧操作有什么关系？</h2>
+<h3 id="section-14">与 WAM 训练的共同问题</h3>
+<p>在 <a href="WAM%E8%AE%AD%E7%BB%83%E5%8F%82%E8%80%83VPP2.html">WAM 训练参考：VPP2</a> 中，一个重要问题是：接入动作学习后，视频基座原有的指令跟随和泛化能力还能保留多少？</p>
+<p>RAFT 也在处理“基础能力向控制能力迁移时，哪些信息应该被保留”。两条路线监督的内容不同：这里是对象、空间和视觉轨迹；WAM 还可能涉及未来视频与交互变化。可以借鉴的是分别评测基础能力和动作能力，再检查训练顺序与参数更新如何影响两者。</p>
+<p>例如，动作成功率提高的同时，目标识别或视频指令跟随下降，这个模型的适用范围可能变窄了。只看一个总成功率，很难发现这件事。</p>
+<h3 id="section-15">对接触密集操作的延伸</h3>
+<p>若面向灵巧手，值得尝试的监督包括接触位置、接触状态、预期滑移方向和相对运动。这些是研究假设，RAFT 本身没有证明它们有效。</p>
+<p>首先要解决标签来源。二维框和接触力的观测条件不同，单张 RGB 通常无法确定摩擦、法向力或接触是否稳定。比较可靠的设计应区分：图像可观察的几何线索、需要多帧估计的状态，以及需要触觉或仿真才能获得的物理量。</p>
+<p>其次要把评测变化分开。换背景主要考验视觉鲁棒性；换物体几何会改变抓取与可达性；换摩擦系数则可能要求不同的力或速度。它们都属于分布变化，但失败原因和需要的监督不一样。</p>
+<h2 id="section-16">9. 如果沿着这篇文章做研究，我会先补哪些对照？</h2>
+<table>
+<thead>
+<tr>
+<th>问题</th>
+<th>可以做的对照</th>
+<th>能澄清什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>收益来自额外训练时间吗？</td>
+<td>匹配总训练算力和动作数据量</td>
+<td>训练预算与监督设计的贡献</td>
+</tr>
+<tr>
+<td>冻结什么最有效？</td>
+<td>冻结视觉、冻结不同层、冻结推理适配器</td>
+<td>参数保护的位置是否关键</td>
+</tr>
+<tr>
+<td>标签的语义内容有用吗？</td>
+<td>正确标注与保持格式但错配内容的标注</td>
+<td>收益是否依赖任务相关信息</td>
+</tr>
+<tr>
+<td>同时训练还有改进空间吗？</td>
+<td>扫描损失权重和采样比例</td>
+<td>当前联合训练配方是否充分优化</td>
+</tr>
+<tr>
+<td>能否保持语言控制？</td>
+<td>同一场景切换目标指令</td>
+<td>策略是否仍根据指令选择对象</td>
+</tr>
+<tr>
+<td>推广到接触变化有效吗？</td>
+<td>分开改变几何、质量、摩擦</td>
+<td>视觉收益能否延伸到物理适配</td>
+</tr>
+</tbody>
+</table>
+<p>这些实验中，训练预算、演示数据和测试任务应保持可比。尤其不能让一种方法额外看到目标测试场景的标注，再把差距全部归因于参数冻结。</p>
+<p>RAFT 给我的主要启发是：<strong>后训练需要同时考虑学会新任务与保留可迁移信息。</strong> 任务相关监督、训练顺序和参数冻结共同影响这件事。它提供了一个容易解释、值得作为基线验证的配方；真正值得继续追问的是，哪些信息需要保护，以及保护后是否确实改善了目标分布之外的行动。</p>
+<footer><a href="../index.html#blog">← Back to Blog</a></footer></article></main></body></html>

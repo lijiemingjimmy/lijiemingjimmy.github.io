@@ -1,500 +1,986 @@
 [
   {
-    "title": "Video Prediction Policy 2：先把视频预测学好，再训练动作策略",
-    "filename": "12-Video Prediction Policy 2.md",
-    "href": "notes/12-Video%20Prediction%20Policy%202.html",
-    "summary": "Video Prediction Policy 2（VPP2）的核心观点是：World-Action Model 的瓶颈不一定只在动作预测，很多时候是视频模型根本没有正确理解“要操作哪个对象、动作如何发生、最后应该到达什么状态”。如果未来视频预测错了，动作模块即使执行得很准确，也会忠实地完成错误的操作。 普通视频生成可以产生视觉上连续、自然的画面，但这不等于"
+    "title": "Closing the Loop：G1 踝关节闭链建模、控制与数值仿真精读",
+    "filename": "Closing-the-Loop.md",
+    "href": "notes/Closing-the-Loop.html",
+    "markdown": "notes/Closing-the-Loop.md",
+    "updated": "2026-11-17T04:26:55.517Z",
+    "summary": "原文链接：Closing the Loop。作者： Kevin Zakka、Qiayuan Liao，日期为 2026-11-16。 这篇文章的主题是：真实机械传动决定了机器人能怎样动、能输出多大力矩，以及同一个控制器实际有多硬。仿真只有关节数量和外观正确，还不足以复现这些性质。"
   },
   {
-    "title": "EgoLAP：用 Language-Action Reasoning 跨越人类与机器人的动作差异",
-    "filename": "13-EgoLAP.md",
-    "href": "notes/13-EgoLAP.html",
-    "summary": "EgoLAP（Learning from Egocentric Human Data through Language-Action Reasoning）关注一个常见问题：人类第一视角数据很多，但人手和机器人手臂在关节数量、尺寸、控制接口上差别很大，直接把人的动作映射到机器人动作往往不稳定。 它的思路是，不强行复制低层关节轨迹，而是让人类和机器人共享一种结构"
+    "title": "On-Policy Distillation：让学生在自己的生成轨迹上接受老师监督",
+    "filename": "On-Policy-Distillation.md",
+    "href": "notes/On-Policy-Distillation.html",
+    "markdown": "notes/On-Policy-Distillation.md",
+    "updated": "2026-11-17T01:29:13.129Z",
+    "summary": "原文：On-Policy Distillation，Kevin Lu / Thinking Machines Lab，发布于 2025-10-27。 核心做法是：学生负责生成，老师负责评估这些生成 token 在对应前缀下的概率，然后更新学生。 它让训练覆盖学生自己会遇到的状态，同时提供细粒度监督。"
   },
   {
-    "title": "UniWAM：统一物理推理、世界生成和动作预测",
-    "filename": "14-UniWAM.md",
-    "href": "notes/14-UniWAM.html",
-    "summary": "UniWAM（Unified World-Action Model）试图把 VLA 和 WAM 的优点放在同一个模型中。VLA 擅长语言理解和任务语义，但动作监督不一定能学好物理未来；WAM 擅长利用视频时序先验，却可能缺少复杂语义推理和开放场景理解。 UniWAM 的基本分工是三个协同 Expert：Physical Reasoner、World Gene"
+    "title": "Agentic Robotics 受控研究：模型怎样从执行失败中改进机器人策略",
+    "filename": "Agentic-Robotics-Controlled-Study.md",
+    "href": "notes/Agentic-Robotics-Controlled-Study.html",
+    "markdown": "notes/Agentic-Robotics-Controlled-Study.md",
+    "updated": "2026-11-16T18:33:21.358Z",
+    "summary": "论文：A Controlled Study of Models, Skills, Feedback, and Curriculum in Agentic Robotics。Kaiyuan Chen 等，UC Berkeley、Bosch、NVIDIA，arXiv:2611.09030v1，2026-11-06。 论文 · 全文与附录 · 项目主页 · 代码 "
   },
   {
-    "title": "PredActor：直接生成可执行动作的人形机器人预测策略",
-    "filename": "15-PredActor.md",
-    "href": "notes/15-PredActor.html",
-    "summary": "PredActor（Predictive Action Diffusion for Steerable Onboard Humanoid Control）研究如何让 Diffusion Model 直接成为人形机器人的底层控制器，同时支持测试时目标引导。 传统人形运动生成通常把参考轨迹交给一个 Tracker 执行，或者直接让 Diffusion Polic"
+    "title": "FSDP 如何通过分片降低分布式训练的显存占用",
+    "filename": "FSDP.md",
+    "href": "notes/FSDP.html",
+    "markdown": "notes/FSDP.md",
+    "updated": "2026-11-16T18:25:40.129Z",
+    "summary": "只使用 FSDP 时，各 rank 仍处理不同数据，并执行所负责模型的完整算子。与 TP、PP 组合后，FSDP 管理的是每个模型并行分区在数据并行维度上的分片。 DDP，即 Distributed Data Parallel，让多个进程处理不同训练样本，再同步梯度。"
   },
   {
-    "title": "USDCraft：用程序化建模生成可仿真的 Articulated 3D Assets",
-    "filename": "16-USDCraft.md",
-    "href": "notes/16-USDCraft.html",
-    "summary": "USDCraft 解决的是 Real2Sim 中一个很实际的问题：真实物体的扫描 Mesh 往往不完整，也没有零件划分、关节类型和物理参数。仅靠 Mesh Segmentation 很难把它恢复成可以在 Isaac Sim 中运动的 articulated asset。 USDCraft 不让 LLM 一次性输出最终 Mesh，而是让它生成一个可执行的 As"
+    "title": "Miles、veRL、slime 与 SLAM 详解",
+    "filename": "Miles-veRL-slime与SLAM.md",
+    "href": "notes/Miles-veRL-slime%E4%B8%8ESLAM.html",
+    "markdown": "notes/Miles-veRL-slime%E4%B8%8ESLAM.md",
+    "updated": "2026-11-16T18:22:32.217Z",
+    "summary": "Miles 官方说明它从 slime 分支发展，两个项目仍共同演进；veRL 则由 ByteDance Seed 发起，来自 HybridFlow 的开源实现。框架定位有重叠，不能简单划成“veRL 只做研究、Miles 才能做生产”。Miles · veRL · slime 先用一个具体例子：让数学模型更擅长解题。"
   },
   {
-    "title": "Skill2Real：通过 Agentic Skill Learning 实现 Zero-Shot Sim-to-Real",
-    "filename": "17-Skill2Real.md",
-    "href": "notes/17-Skill2Real.html",
-    "summary": "Skill2Real 研究如何让 Agent 在仿真中学习可执行技能，并把技能知识直接迁移到真实机器人，不再依赖真机任务微调或更新技能记忆。 它的重点不在于发明一个新的低层 Policy，而在于组织技能学习、失败诊断、验证、持久化记忆和跨域执行。系统希望保存的是可以被再次调用的技能程序，而不是只能在某个仿真状态下复现的关节轨迹。"
+    "title": "LiteReality-Agent：从真实房间扫描到可编辑、可交互的仿真场景",
+    "filename": "LiteReality-Agent.md",
+    "href": "notes/LiteReality-Agent.html",
+    "markdown": "notes/LiteReality-Agent.md",
+    "updated": "2026-11-16T18:13:25.974Z",
+    "summary": "论文：LiteReality-Agent: An Agentic System for Interactable 3D Indoor Scene Reconstruction，arXiv:2610.01863，2026 年 10 月。 项目主页 · 论文 · 官方博客 · 代码"
   },
   {
-    "title": "Conclusion / Discussion：机器人学习正在从“生成动作”走向“持续改进”",
-    "filename": "18-Conclusion-Discussion.md",
-    "href": "notes/18-Conclusion-Discussion.html",
-    "summary": "这 17 篇工作虽然来自不同方向，但它们正在回答同一个问题：机器人能不能不依赖大量人工设计和逐任务训练，而是利用数据、仿真、世界模型、程序搜索和真实反馈，持续获得新的能力？ 从整体上看，当前的进展并不是由某一个模型单独带来的，而是多个层次同时发生变化：基础模型开始理解更长的行为过程，生成式策略可以接受强化学习后训练，LLM 可以搜索奖励程序和技能程序，仿真资"
+    "title": "AHa-3D：用几何工具和验证反馈，把室内视频变成可编辑场景",
+    "filename": "AHa-3D.md",
+    "href": "notes/AHa-3D.html",
+    "markdown": "notes/AHa-3D.md",
+    "updated": "2026-11-16T18:06:49.133Z",
+    "summary": "项目：AHa-3D: Agentic Tool Use for Real2Sim with GPT-6 Astra。作者为 Congrong Xu、Siyuan Bian、Jiawei Wang、Haowei Sun 和 Jun Gao。官方引用将其列为 2026 年 9 月的项目博客；本文按博客与开源系统解读，不将其写成已发表的同行评审论文。 项目主页 ·"
   },
   {
-    "title": "A Sober Look：语言模型推理进展中的评测陷阱与可复现性",
-    "filename": "A-Sober-Look-Reasoning-Evaluation.md",
-    "href": "notes/A-Sober-Look-Reasoning-Evaluation.html",
-    "summary": "> 论文：A Sober Look at Progress in Language Model Reasoning: Pitfalls and Paths to Reproducibility   > 作者：Andreas Hochlehnert、Hardik Bhatnagar、Vishaal Udandarao、Samuel Albanie、Ameya "
+    "title": "RoboSimStudio：让 Agent 根据真实交互构建和修正物理仿真",
+    "filename": "RoboSimStudio.md",
+    "href": "notes/RoboSimStudio.html",
+    "markdown": "notes/RoboSimStudio.md",
+    "updated": "2026-11-16T18:01:30.563Z",
+    "summary": "论文：RoboSimStudio: An Interactive Toolkit for Rapid Real2Sim of Robot Manipulation Tasks，UC Berkeley × NVIDIA，arXiv:2610.18835。 项目主页 · 论文 · 代码 · 安装说明 · Live 工作流"
   },
   {
-    "title": "AI 性能分析与插装：工具原理、Attention 优化与集群诊断",
-    "filename": "AI性能分析与插装.md",
-    "href": "notes/AI%E6%80%A7%E8%83%BD%E5%88%86%E6%9E%90%E4%B8%8E%E6%8F%92%E8%A3%85.html",
-    "summary": "AI 性能分析要回答一个具体问题：程序为什么慢，哪些观测支持这个判断，修改以后完整任务到底快了多少？ 这份笔记以一个两层 TinyDecoder 的 Attention 优化为主例。报告中的四步 decode 从 18.206ms 降到 3.099ms，约加速 5.9 倍。理解这个结果，需要把算子调用次数、张量形状、CPU/GPU 时间线、kernel 硬件"
+    "title": "GaP：让 Coding Agent 编写、验证和改进机器人策略",
+    "filename": "GaP.md",
+    "href": "notes/GaP.html",
+    "markdown": "notes/GaP.md",
+    "updated": "2026-11-16T16:28:07.380Z",
+    "summary": "论文：GaP: A Graph-as-Policy Multi-Agent Self-Learning Harness For Variational Automation (VA) Tasks。UC Berkeley、NVIDIA 与 Bosch，CoRL 2026 Spotlight。 项目主页 · 论文 v3 · 代码 · 技能库 · 文档"
   },
   {
-    "title": "ALPS：世界模型需要什么样的视觉状态编码器？",
-    "filename": "ALPS.md",
-    "href": "notes/ALPS.html",
-    "summary": "世界模型通常先把图像编码成 latent，再预测动作会怎样改变 latent。如果第一步已经丢掉物体的位置、姿态或局部关系，后面的动力学模型就很难把这些信息重新找回来。 ALPS 关注的就是这个起点：同一套视觉 token，能不能既保留物理状态，又与语言对齐，还能被解码回图像？"
+    "title": "SpatialTree：空间能力怎么拆开测，又该怎么一起训练？",
+    "filename": "SpatialTree.md",
+    "href": "notes/SpatialTree.html",
+    "markdown": "notes/SpatialTree.md",
+    "updated": "2026-11-16T12:07:25.145Z",
+    "summary": "SpatialTree 研究的是一个很实际的问题：一个模型空间题答得不好，到底缺了哪种能力？补距离、大小或跨视角对应关系，能不能让它更会规划和行动？ 作者先提出四层能力分类，再用 SpatialTree-Bench 测量这些能力，最后通过 SFT 和 RL 改变训练内容，观察收益会迁移到哪里。它最有价值的部分，是把“空间智能更强了”拆成可分析的能力变化。"
   },
   {
-    "title": "AlphaEvolve 论文解读：把程序修改接入可验证的进化搜索",
-    "filename": "AlphaEvolve.md",
-    "href": "notes/AlphaEvolve.html",
-    "summary": "如果每次都让模型从头回答同一个问题，计算主要花在重复采样。AlphaEvolve 将完整程序及其修改作为探索对象，让已经验证有效的候选程序成为下一轮改进的起点。 系统中的主要循环可以概括为："
+    "title": "RynnBrain 1.1：先把空间和交互知识学进 VLM，再训练机器人动作",
+    "filename": "RynnBrain-1.1.md",
+    "href": "notes/RynnBrain-1.1.html",
+    "markdown": "notes/RynnBrain-1.1.md",
+    "updated": "2026-11-15T13:59:44.023Z",
+    "summary": "RynnBrain 1.1 可以沿着一个问题来读：同样用机器人示范训练 VLA，如果起点已经更懂物体、空间和操作，最后的控制策略会不会更好？ 作者从 Qwen3.5 出发，先通过多种具身任务继续预训练，让模型学会输出位置、空间关系、轨迹和抓取姿态；再把这个主干用于连续动作生成，在真实机器人示范上训练 VLA。主表里，相同动作训练配方下，RynnBrain 初"
   },
   {
-    "title": "Behavioral Cloning Mystery：为什么行为克隆的 loss 和成功率经常对不上？",
-    "filename": "Behavioral-Cloning-Mystery.md",
-    "href": "notes/Behavioral-Cloning-Mystery.html",
-    "summary": "Seohong Park 在这篇博客里讨论了四个看起来反直觉的现象：验证损失上升，机器人反而做得更好；每步重新决策的策略失败，执行动作块的策略却成功；简单状态输入也需要很大的网络；输入只改变缩放比例，成功率就明显不同。 这些观察指向一个共同问题：行为克隆在示范数据上拟合动作，部署时却必须处理自己造成的状态变化。两种分布之间的差别，会让离线指标与执行表现脱节。"
+    "title": "RoboFinals RL-Env：把真实工作做成机器人能反复练习的环境",
+    "filename": "RoboFinals-RL-Env.md",
+    "href": "notes/RoboFinals-RL-Env.html",
+    "markdown": "notes/RoboFinals-RL-Env.md",
+    "updated": "2026-11-15T12:07:56.678Z",
+    "summary": "它把 EgoSuite 人类操作采集、Agent 场景构建、SimReady 资产、物理校准和 Newton 求解器连起来。首个发布环境是汽车维修，重点包含长时程、灵巧手和可变形物体交互。 官方项目页 · 早期访问入口 · RoboFinals 评测平台"
+  },
+  {
+    "title": "PEAR：把一次完整的机器人尝试，变成推理模型的 RL 训练样本",
+    "filename": "PEAR.md",
+    "href": "notes/PEAR.html",
+    "markdown": "notes/PEAR.md",
+    "updated": "2026-11-15T11:55:06.156Z",
+    "summary": "论文：Training Reasoning Models in Simulation to Natively Use Real Robots，2026 年 11 月预印本。 项目介绍 · 官方论文 · 代码 · 本地论文备份"
+  },
+  {
+    "title": "Ropedia Xperience 2：这些数据好在哪里，离机器人可用还差什么？",
+    "filename": "Ropedia-Xperience-2.md",
+    "href": "notes/Ropedia-Xperience-2.html",
+    "markdown": "notes/Ropedia-Xperience-2.md",
+    "updated": "2026-11-13T10:35:15.911Z",
+    "summary": "论文：Ropedia Xperience 2: A Gold Standard for Scaling Physical AI Environments and Behaviors，2026 年 11 月 12 日，arXiv:2611.17060v1。 资料：论文全文 · 项目页 · 官方代码 · 数据仓库。"
+  },
+  {
+    "title": "GR00T 2：把未来视频、机器人动作和 Agent 执行连起来",
+    "filename": "GR00T-2.md",
+    "href": "notes/GR00T-2.html",
+    "markdown": "notes/GR00T-2.md",
+    "updated": "2026-11-13T10:28:33.478Z",
+    "summary": "论文：GR00T 2: Scaling Robot Foundation Models for Generalization, Dexterity, and Adaptation，NVIDIA，2026 年 11 月。 资料：官方项目页 · 官方白皮书 · 本地白皮书备份。"
+  },
+  {
+    "title": "CEL：让 96 台机器人用执行经验改进共享策略",
+    "filename": "CEL.md",
+    "href": "notes/CEL.html",
+    "markdown": "notes/CEL.md",
+    "updated": "2026-11-13T10:18:18.110Z",
+    "summary": "论文：Learning from Fleet Experience: Collective Experience Learning across 96 Robots。清华大学、智元机器人、无问芯穹，2026 年 10 月。 资料：论文 · 项目主页 · RLinf。"
+  },
+  {
+    "title": "Gemini Robotics 2.5：把动作能力、任务闭环和机器人学习放在一起看",
+    "filename": "Gemini-Robotics-2.5.md",
+    "href": "notes/Gemini-Robotics-2.5.html",
+    "markdown": "notes/Gemini-Robotics-2.5.md",
+    "updated": "2026-11-13T10:15:24.128Z",
+    "summary": "Google DeepMind，2026 年 11 月 10 日发布。 这次发布可以围绕一个问题来理解：一个已经会操作的机器人，怎样更快地学会更多任务，并在真实环境里把任务稳定做完？"
+  },
+  {
+    "title": "从 World Models 到 Dreamer 4：在世界模型里学习行动",
+    "filename": "Dreamer系列演进笔记.md",
+    "href": "notes/Dreamer%E7%B3%BB%E5%88%97%E6%BC%94%E8%BF%9B%E7%AC%94%E8%AE%B0.html",
+    "markdown": "notes/Dreamer%E7%B3%BB%E5%88%97%E6%BC%94%E8%BF%9B%E7%AC%94%E8%AE%B0.md",
+    "updated": "2026-11-12T14:29:05.240Z",
+    "summary": "这组图片讲的是一条很清楚的研究主线：先学习“采取动作之后会发生什么”，再利用预测出来的经验改进策略。 难点逐渐从“能不能在模型里学”，转向“怎样记住历史、怎样高效优化策略、怎样跨任务稳定训练，以及怎样利用大规模离线视频”。 本文按内容顺序保存了全部 15 张原图，并在相应位置补充解释。原图为用户提供的二手阅读材料，保留原貌；补充部分依据文末一手资料核对。原图"
+  },
+  {
+    "title": "On Agentic Manipulation Policies：让模型在操作过程中持续观察、写代码和改策略",
+    "filename": "On-Agentic-Manipulation-Policies.md",
+    "href": "notes/On-Agentic-Manipulation-Policies.html",
+    "markdown": "notes/On-Agentic-Manipulation-Policies.md",
+    "updated": "2026-11-12T14:23:14.810Z",
+    "summary": "这篇文章最值得关注的地方，是把机器人策略组织成一个持续运行的 Agent：模型观察现场，写代码计算几何和生成轨迹，执行后再根据反馈修改下一步。 操作能力由通用模型、执行接口和交互经验共同构成。 这样理解后，“通用模型直接控制机器人”就具体了：模型决定抓哪里、从什么方向接近、什么时候换办法；运动学求解器和机器人控制器负责把这些决定落实成关节运动。"
+  },
+  {
+    "title": "LaST0.5：在世界预测和机器人动作之间，加一层交互表征",
+    "filename": "LaST0.5.md",
+    "href": "notes/LaST0.5.html",
+    "markdown": "notes/LaST0.5.md",
+    "updated": "2026-11-11T17:07:03.851Z",
+    "summary": "LaST0.5 关注一个很具体的问题：视频模型能预测场景怎样变化，但动作控制最需要的信息，往往集中在机器人与物体接触的局部。怎样把这部分信息提取出来，再决定预测动作应该执行多长？ 它给出两项设计：Interaction-Centric Latent Reasoning（ICLR）用专门的 Latent Expert 提取交互表征；Adaptive World"
+  },
+  {
+    "title": "SWAM：视频模型怎样学会控制机器人，又不丢掉原有能力",
+    "filename": "SWAM.md",
+    "href": "notes/SWAM.html",
+    "markdown": "notes/SWAM.md",
+    "updated": "2026-11-11T05:27:31.715Z",
+    "summary": "SWAM 最值得看的，是它把 WAM 的训练问题拆得很具体：视频预训练提供了语言与视觉动态之间的联系，但把动作分支接进来以后，还需要靠合适的数据、标注和信息交互方式，才能把这些能力转化成机器人控制。 一段视频可以告诉模型“杯子被拿起来了”，机器人动作还必须说明哪只手移动、朝哪个方向、怎样旋转、何时闭合夹爪。两者相关，但监督内容不同。SWAM 围绕这层联系，研"
+  },
+  {
+    "title": "Recova：让机器人把失败变成可复用的恢复技能",
+    "filename": "Recova.md",
+    "href": "notes/Recova.html",
+    "markdown": "notes/Recova.md",
+    "updated": "2026-11-10T09:41:32.056Z",
+    "summary": "Recova 最值得关注的是这条学习流程：机器人先暴露失败，Agent 决定怎样恢复，成功的恢复过程再成为技能或训练数据，让下一轮机器人少依赖一次人工接管。 例如，套环任务中，一个圆环斜着卡在柱子顶部。任务策略可能继续尝试放下一个圆环，但真正需要的动作是先处理卡住的圆环。这个动作可能暂时偏离原任务，却是继续完成任务的前提。Recova 将这种能力单独组织成 "
+  },
+  {
+    "title": "MoE 的 EP 到底该开多大：从权重复用到 MegaMoE",
+    "filename": "MoE-Expert-Parallelism.md",
+    "href": "notes/MoE-Expert-Parallelism.html",
+    "markdown": "notes/MoE-Expert-Parallelism.md",
+    "updated": "2026-11-09T17:52:34.603Z",
+    "summary": "把两篇文章放在一起，最值得记住的是这件事：增大 EP，可以让一张卡少放一些专家，让每个专家一次处理更多 token；但当读权重已经不占主要时间，继续加卡的收益就会很小。 这也是 Prefill 和 Decode 经常采用不同 EP 的原因。Prefill 一次有大量 token，专家本来就能充分复用权重；Decode 的单步 batch 小，需要把更多卡上的"
+  },
+  {
+    "title": "SUGARv2：从合成交互参考，到能看图执行的全身操作技能",
+    "filename": "SUGARv2.md",
+    "href": "notes/SUGARv2.html",
+    "markdown": "notes/SUGARv2.md",
+    "updated": "2026-11-09T12:51:36.040Z",
+    "summary": "SUGARv2 的主线是：先生成机器人与物体应该怎样互动的参考，再通过物理仿真训练 Teacher，最后把技能转移到视觉策略，并用 RL 继续改善执行。 论文：SUGARv2: Learning Diverse Visual Humanoid Loco-Manipulation Skills from Synthesized Interaction Refe"
+  },
+  {
+    "title": "Open-HumanWAM：5 万小时人类第一视角视频，究竟给机器人带来了什么？",
+    "filename": "Open-HumanWAM.md",
+    "href": "notes/Open-HumanWAM.html",
+    "markdown": "notes/Open-HumanWAM.md",
+    "updated": "2026-11-09T12:35:06.201Z",
+    "summary": "> 这篇最值得读的，是它把人类预训练、机器人适配和视觉目标条件放到同一条研究路线里，分别测量这些部分能带来多少收益。 论文：Open-HumanWAM: An Open Recipe for Scaling Human and Robot Experience for Embodied Foundation Models，2026 年 11 月 4 日首次提"
+  },
+  {
+    "title": "DiT、U-Net 与 Latent Spaces：把生成目标、网络和表示分开理解",
+    "filename": "DiT-UNet-Latent-Spaces.md",
+    "href": "notes/DiT-UNet-Latent-Spaces.html",
+    "markdown": "notes/DiT-UNet-Latent-Spaces.md",
+    "updated": "2026-11-08T08:19:57.896Z",
+    "summary": "> Flow Matching / Diffusion 规定模型学什么；DiT / U-Net 决定用什么网络学；latent space 决定在哪个空间里学。三者可以组合。 阅读材料：DiT、U-Net 与 Latent Spaces.pdf，共 14 页。本文按原文第 6.1—6.3 节展开，补充张量形状、VAE 推导、训练与采样流程，以及与视频和机器人"
+  },
+  {
+    "title": "Retargeting Through Reasoning：让 Agent 在仿真里改出能用的人形机器人动作",
+    "filename": "Retargeting-Through-Reasoning.md",
+    "href": "notes/Retargeting-Through-Reasoning.html",
+    "markdown": "notes/Retargeting-Through-Reasoning.md",
+    "updated": "2026-11-07T07:38:55.793Z",
+    "summary": "> 人类示范给出“要让物体发生什么变化”，Agent 通过写代码、运行仿真、检查失败，寻找机器人做得到的交互方式。 原文：Retargeting Through Reasoning for Humanoid–Object Interaction（CMU、FieldAI、Caltech，2026 年 11 月 6 日项目博客）。"
+  },
+  {
+    "title": "Context Language Models｜让 Agent 学会维护自己下一步要看的上下文",
+    "filename": "Context-Language-Models.md",
+    "href": "notes/Context-Language-Models.html",
+    "markdown": "notes/Context-Language-Models.md",
+    "updated": "2026-11-07T06:55:24.302Z",
+    "summary": "Rulin Shao 等，University of Washington、Meta Superintelligence Labs、MIT 等机构，2026 年 9 月 29 日。依据用户提供的解读整理，并核对论文 v1 的方法、训练设置和实验口径。论文 · 代码 一个 Agent 连续工作十二小时，会留下搜索结果、终端输出、错误路线、当前计划，以及多个子任"
+  },
+  {
+    "title": "GSBR｜在线 RL 怎样学出比预训练策略更好的抓法？",
+    "filename": "GSBR.md",
+    "href": "notes/GSBR.html",
+    "markdown": "notes/GSBR.md",
+    "updated": "2026-11-06T07:23:08.888Z",
+    "summary": "Charles Xu、Jacob Berg、Liyiming Ke、Sergey Levine，UC Berkeley 与 Physical Intelligence，2026 年 11 月 3 日。论文 · 项目页与方法动画 想象桌上有两个杯子，任务要求抓右边那个。预训练策略看同一张图，有时伸向左杯，有时伸向右杯。右边那种抓法已经值得保留，只是落点稍偏。现"
+  },
+  {
+    "title": "Value Forcing｜同一条经验，怎样教会 critic 预测一整个回报分布？",
+    "filename": "Value-Forcing.md",
+    "href": "notes/Value-Forcing.html",
+    "markdown": "notes/Value-Forcing.md",
+    "updated": "2026-11-06T07:19:37.416Z",
+    "summary": "Chongyi Zheng、Zhiyuan Zhou、Qiyang Li、Benjamin Eysenbach、Sergey Levine，普林斯顿大学与加州大学伯克利分校，2026。 论文 · 项目主页与交互演示 假设机械臂有两种抓法。第一种有一半概率抓稳，回报为 +10，另一半概率滑落，回报为 −10。第二种每次都得到 0。普通 Q 函数给两种动作都打 "
+  },
+  {
+    "title": "Puro-2B｜普通实验室花多少钱，能从头训练一个语言模型？",
+    "filename": "Puro-2B.md",
+    "href": "notes/Puro-2B.html",
+    "markdown": "notes/Puro-2B.md",
+    "updated": "2026-11-06T06:53:56.843Z",
+    "summary": "清华大学与鹏城实验室团队在 RTX 5090 集群上，从头训练了一组约 20 亿参数的语言模型，最长的一次用了 1.4 万亿 token。标题里的两个“5090”是个双关。真正值得算的是两笔账：花多少钱能让模型读完这些数据，以及读完以后，模型究竟学到了多少。作者博客，2026 年 10 月 18 日 · 技术报告 v2 这些分数能回答“能不能用几千美元训练出"
+  },
+  {
+    "title": "RAFT：VLA 微调时，怎样保住任务相关的理解能力？",
+    "filename": "RAFT.md",
+    "href": "notes/RAFT.html",
+    "markdown": "notes/RAFT.md",
+    "updated": "2026-11-05T05:42:45.127Z",
+    "summary": "论文：RAFT: Reasoning-Aligned Fine-Tuning Improves Robustness of VLA Post-Training   作者：Shresth Grover、Andrey Kolobov、Dhruv Shah；Princeton / Microsoft Research。2026 年 11 月 3 日提交。  "
+  },
+  {
+    "title": "ϕ-RIE 怎样把重建里的杯子拿起来？",
+    "filename": "PhiRIE.md",
+    "href": "notes/PhiRIE.html",
+    "markdown": "notes/PhiRIE.md",
+    "updated": "2026-11-03T02:40:06.189Z",
+    "summary": "在这篇论文里，RIE 取自 Reconstruction to Interactive Environments，意思是「从重建到可交互环境」。完整题名是 ϕ-RIE: From Photorealistic Reconstruction to Interactive Environments，由 Runyi Yang 等人于 2026 年 9 月发布。论文"
+  },
+  {
+    "title": "从 RT-1 到 MolmoAct 2，机器人究竟学会了哪一步？",
+    "filename": "VLA-History-RT1-to-MolmoAct2.md",
+    "href": "notes/VLA-History-RT1-to-MolmoAct2.html",
+    "markdown": "notes/VLA-History-RT1-to-MolmoAct2.md",
+    "updated": "2026-11-03T00:54:39.125Z",
+    "summary": "想象桌上有一只玩具恐龙，后面放着一个盒子。你说「把灭绝的动物放进盒子」，机械臂开始移动，途中有人把盒子往左挪了一点。这个小任务至少会在三个地方失败。机器人可能拿错玩具，可能认对了恐龙却从错误的位置下爪，也可能已经抓稳了，却继续朝盒子的旧位置移动。三种失败看起来都叫「任务没完成」，对应的改进却分别在语义理解、动作生成和闭环控制。 Khushi 的《From R"
+  },
+  {
+    "title": "Machenta：机器人能不能看一遍示范，就开始做新任务？",
+    "filename": "Machenta-Instant-Robot-Learning.md",
+    "href": "notes/Machenta-Instant-Robot-Learning.html",
+    "markdown": "notes/Machenta-Instant-Robot-Learning.md",
+    "updated": "2026-11-02T14:53:18.969Z",
+    "summary": "资料：Introducing Instant Robot Learning，Machenta，2026 年 10 月 27 日发布。 先想一个场景：你想让机器人把螺丝刀放回工具架。你演示一次，再把螺丝刀换个位置，机器人直接开始做。下一次要换纸卷，就换一段示范。同一个模型，权重固定，任务通过示范输入。"
+  },
+  {
+    "title": "Flow Matching and Diffusion Models（三）：从速度场到 Score，再到 CFG",
+    "filename": "Flow Matching and Diffusion Models（三）.md",
+    "href": "notes/Flow%20Matching%20and%20Diffusion%20Models%EF%BC%88%E4%B8%89%EF%BC%89.html",
+    "markdown": "notes/Flow%20Matching%20and%20Diffusion%20Models%EF%BC%88%E4%B8%89%EF%BC%89.md",
+    "updated": "2026-11-02T14:22:32.432Z",
+    "summary": "这讲可以沿着一个问题读：上一讲已经会用速度场把噪声搬成数据了，为什么还需要 score、随机微分方程和 guidance？ Score 提供另一种描述分布的方式；SDE 允许生成过程中持续加入随机性；guidance 则让生成结果服从文字、类别或其他条件。对于这里的高斯概率路径，这三件事可以用同一套公式连起来。"
+  },
+  {
+    "title": "MaxRL：多采样不只是降低方差，还能改变正在优化的目标",
+    "filename": "MaxRL.md",
+    "href": "notes/MaxRL.html",
+    "markdown": "notes/MaxRL.md",
+    "updated": "2026-11-01T14:27:29.808Z",
+    "summary": "给模型两道题，一道已经有 90% 的概率做对，另一道只有 10%。如果训练继续把大部分有效信号用在容易题上，平均准确率可能很快提高，但难题仍然很难采到正确答案。MaxRL 想改变这种学习信号的分配：通过成功率归一化，让有限次采样得到的更新逐步接近“最大化各题成功概率的对数”。 论文：Maximum Likelihood Reinforcement Learn"
+  },
+  {
+    "title": "Unified Training：把预训练、SFT 和适当的 RL 更新放进同一个训练器",
+    "filename": "Unified-Training.md",
+    "href": "notes/Unified-Training.html",
+    "markdown": "notes/Unified-Training.md",
+    "updated": "2026-11-01T14:23:16.819Z",
+    "summary": "通常训练一个语言模型，会先读通用文本，再读领域材料和指令示范，最后根据奖励学习。每次切换阶段，数据、损失和运行系统都可能一起改变。Unified Training 提出一个更便于联合研究的视角：统一模型拟合数据的规则，把主要设计问题转移到“现在该学哪些数据、各占多少、何时调整”。 关键连接来自 MaxRL：对于二元奖励，它可以被解释成拟合模型自己生成的成功答"
+  },
+  {
+    "title": "视频基模的 Scaling Law：原图存档与补充笔记",
+    "filename": "Video-Foundation-Model-Scaling-Laws.md",
+    "href": "notes/Video-Foundation-Model-Scaling-Laws.html",
+    "markdown": "notes/Video-Foundation-Model-Scaling-Laws.md",
+    "updated": "2026-11-01T13:38:56.627Z",
+    "summary": "这份笔记围绕一个实际问题：在固定训练预算下，模型参数、数据、多长的视频和多高的分辨率应该怎样配，才能得到对目标任务最有用的模型？ 资料来自《视频基模的 scaling law study》截图，文件署名为“笨笨长不大”。本次收到原编号 2–18，共 17 张，全部按顺序保存在文末。图片的完整 JPEG 数据直接嵌入此 Markdown，不依赖 Downloa"
+  },
+  {
+    "title": "ASENA：模型权重不变，机器人怎样通过经验变得更会做事？",
+    "filename": "ASENA.md",
+    "href": "notes/ASENA.html",
+    "markdown": "notes/ASENA.md",
+    "updated": "2026-11-01T11:15:14.715Z",
+    "summary": "机器人第一次遇到弯曲楼梯，可能沿原来的方向一直走，最后卡住。它检查执行记录后发现，问题出在楼梯转向处，于是写出一段程序：前进后检查高度和位移，没有进展就试探其他朝向，到达平台后停止。如果这段程序被保存下来，下次就能直接调用。 论文为 ASENA: Self-evolving Agents for Embodied Navigation，An-Chieh Ch"
+  },
+  {
+    "title": "RoboSkills：给 Coding Agent 一套机器人工具，再让它写出可执行的技能",
+    "filename": "RoboSkills.md",
+    "href": "notes/RoboSkills.html",
+    "markdown": "notes/RoboSkills.md",
+    "updated": "2026-10-31T17:41:05.268Z",
+    "summary": "让机器人把红色积木叠到蓝色积木上，至少要做几件事：找到两个物体，估计位置，选择抓取姿态，规划运动，放下之后检查有没有叠稳。RoboSkills 把这些环节组织成 Coding Agent 可以调用的工具和流程，让 Agent 用代码完成任务，也可以反复实验，写出以后能够独立运行的机器人程序。 项目由 OpenRoboKit 开源，仓库采用 MIT Licen"
+  },
+  {
+    "title": "PACE、ForeTac 与 ViTacX：触觉怎样从反馈信号变成动作选择的依据",
+    "filename": "PACE-ForeTac-ViTacX.md",
+    "href": "notes/PACE-ForeTac-ViTacX.html",
+    "markdown": "notes/PACE-ForeTac-ViTacX.md",
+    "updated": "2026-10-31T16:29:41.109Z",
+    "summary": "插钥匙时，视觉帮助我们找到锁孔，手上的阻力则告诉我们有没有碰到边缘、是否需要退一点。抓薯片又多了一层要求：等到感觉它碎了再松手，已经太晚。机器人因此既需要读懂当前接触，也需要判断下一段动作会带来什么接触。 附件介绍的三项成果分别落在不同层次：PACE 将当前触觉用于动作生成与局部纠偏；ForeTac 预测候选动作的未来触觉，并用预测质量修改采样；ViTacX"
+  },
+  {
+    "title": "SGD 怎样通过重复使用数据，学到隐藏的低维结构？",
+    "filename": "SGD-Low-Dimensional-Polynomials.md",
+    "href": "notes/SGD-Low-Dimensional-Polynomials.html",
+    "markdown": "notes/SGD-Low-Dimensional-Polynomials.md",
+    "updated": "2026-10-31T16:27:02.649Z",
+    "summary": "一个输入有 1,000 维，但真正决定标签的，可能只是其中某个未知方向上的投影。神经网络要做的，是先找出这个方向，再学习投影值与标签之间的关系。 这篇论文最有意思的发现是：相同训练样本用第二次时，它对梯度的作用可能已经变了。 第一次更新将标签信息写进参数，第二次再看到同一样本，网络的非线性便可能产生更高阶的标签统计量，从中提取原本很弱的方向信息。"
+  },
+  {
+    "title": "Realtime-Bench：想得对，还要来得及做",
+    "filename": "Realtime-Bench.md",
+    "href": "notes/Realtime-Bench.html",
+    "markdown": "notes/Realtime-Bench.md",
+    "updated": "2026-10-31T15:31:52.931Z",
+    "summary": "假设一个 Agent 正在竞价。它看到了当前价格，算出了合理报价，也知道应该点击哪个按钮。问题是，拍卖只剩 5 秒，它却用了 10 秒思考。最后输出的操作即使完全正确，也已经没有执行价值。 Realtime-Bench 研究的就是这类问题：模型在观测时刻想出的动作，到真正执行时是否还有效？ 它用动态网页和游戏，把推理消耗的时间放进任务本身，再用三种时钟区分任"
+  },
+  {
+    "title": "QCP：让机器人选择“做得多好”，再用实际表现更新这个标准",
+    "filename": "QCP.md",
+    "href": "notes/QCP.html",
+    "markdown": "notes/QCP.md",
+    "updated": "2026-10-31T15:26:46.938Z",
+    "summary": "同样是把杯子放上托盘，机器人可以慢慢放稳，也可以快速完成；同样都算成功，动作质量却差很多。如果训练数据把这些执行方式混在一起，普通行为克隆能学会完成任务，却没有直接的接口让人选择“这次快一点”或者“这次稳一点”。 QCP 的做法很直观：先按真实执行质量给轨迹分档，让策略学会按档位行动；再让它尝试最高档，把新执行按实际表现重新标注，加入数据后继续训练。 最高档"
   },
   {
     "title": "CHyLL：碰撞会让状态跳变，能不能换一种坐标来学习？",
     "filename": "CHyLL.md",
     "href": "notes/CHyLL.html",
+    "markdown": "notes/CHyLL.md",
+    "updated": "2026-10-31T14:41:41.899Z",
     "summary": "读 CHyLL，先抓住一个问题：小球落地之前还在向下运动，落地之后速度突然朝上。如果用一个普通 Neural ODE 直接预测位置和速度，它怎样表示这次瞬间发生的变化？ CHyLL 系列选择重新表示状态：把一次重置前后的两个状态，在潜在空间里连接起来，让动力学沿着连接后的空间连续演化。它把研究重点从“什么时候切换模型”移到了“什么样的状态空间适合学习”。理解"
-  },
-  {
-    "title": "Curriculum RL 论文解读：先找到能力边界，再引入针对性指导",
-    "filename": "Curriculum-RL.md",
-    "href": "notes/Curriculum-RL.html",
-    "summary": "如果当前模型对某个难题采样得到的回答全部错误，组相对奖励就缺乏可区分的正确路径。继续强化原有轨迹，未必能让训练进入新的有效区域。 论文据此把课程组织与新轨迹来源结合，关注如何让边界附近的问题产生可学习信号。"
-  },
-  {
-    "title": "DAPO 论文解读：让大规模推理强化学习稳定工作",
-    "filename": "DAPO.md",
-    "href": "notes/DAPO.html",
-    "summary": "把可验证结果奖励接到语言模型上，还需要处理训练中探索不足、采样组没有奖励差异、回答长度差异以及超长截断等问题。DAPO 基于 GRPO 风格的组相对优化，对这些环节作出系统性调整。 项目报告，在 Qwen2.5-32B Base 上取得 AIME 2024 的 50% 准确率，并公开训练配方、数据、verifier、模型及基础设施材料。来源：项目主页"
-  },
-  {
-    "title": "DITTO-X：让人类可以无缝接管机器人的灵巧手",
-    "filename": "DITTO-X-双向遥操作.md",
-    "href": "notes/DITTO-X-%E5%8F%8C%E5%90%91%E9%81%A5%E6%93%8D%E4%BD%9C.html",
-    "summary": "项目与论文： DITTO-X: Forward and Reverse Teleoperation for Dexterous Manipulation and Human Intervention DITTO-X 关注的是一个常见却容易被忽略的问题：机器人已经自主抓住物体后，如果动作出现问题，人类怎样接管，而不会因为手的姿态突然跳变把物体掉下来？"
-  },
-  {
-    "title": "Deterministic Policy Gradient（DPG）：确定性策略梯度",
-    "filename": "DPG.md",
-    "href": "notes/DPG.html",
-    "summary": "DPG 是连续动作空间中的 Policy Gradient 方法。它不通过提高某个动作的采样概率来更新策略，而是让 Critic 计算：当前动作应该朝哪个方向变化，才能提高未来回报。 核心梯度链是："
-  },
-  {
-    "title": "DenseNet 论文解读：通过密集连接复用特征",
-    "filename": "DenseNet.md",
-    "href": "notes/DenseNet.html",
-    "summary": "对于同一个 dense block 中的第 $\\ell$ 层： x_{\\ell}=H_{\\ell}([x_0,x_1,\\ldots,x_{\\ell-1}])."
-  },
-  {
-    "title": "DexTeleop-0：让遥操作在接触之后还能继续做对",
-    "filename": "DexTeleop-0.md",
-    "href": "notes/DexTeleop-0.html",
-    "summary": "人手做出一个捏住瓶盖的动作，机器人复现了相似的姿态，并不意味着它真的捏稳了。手指长度、关节轴、接触位置稍有差别，原本用于转动瓶盖的力，就可能变成挤压、滑动，或者把瓶子推倒。 DexTeleop-0 的思路是：人给出操作意图，触觉闭环修正接触细节。 它把动作重定向得到的关节目标当作名义指令，再用力反馈计算小幅修正，让遥操作从“形状像人手”进一步走向“接触能完成"
-  },
-  {
-    "title": "ENPIRE：让机器人自己做策略改进",
-    "filename": "ENPIRE.md",
-    "href": "notes/ENPIRE.html",
-    "summary": "ENPIRE（Agentic Robot Policy Self-Improvement in the Real World）的核心思路，是把真实机器人实验组织成一个可以反复运行的闭环：重置环境，执行策略，判断结果，根据失败继续改进。 它关注的不是让 Agent 一次性写出完美控制器，而是把机器人研究中原本由人完成的试验、观察、调参和改代码，逐步交给 Age"
-  },
-  {
-    "title": "EVA：让视频世界模型生成机器人能够执行的动作",
-    "filename": "EVA.md",
-    "href": "notes/EVA.html",
-    "summary": "论文：Aligning Video World Models with Executable Robot Actions via Inverse Dynamics Rewards。 本笔记依据提供的论文解读整理，实验数字沿用该材料，未独立复核原文。"
-  },
-  {
-    "title": "FACT：把人类的接触经验用来训练机器人灵巧操作",
-    "filename": "FACT.md",
-    "href": "notes/FACT.html",
-    "summary": "拧开瓶盖时，手指的位置很重要，但位置相同不代表操作相同。夹得太松，转动时会打滑；夹得太紧，又可能让物体变形。普通视频能够记录手怎样运动，却很难确定手指到底用了多大的力。 论文：FACT: A Multimodal Force–Action–Track Foundation Model for Human-to-Robot Dexterity，2026 年 1"
-  },
-  {
-    "title": "论文阅读笔记：机器人数据引擎、推理探索与自我改进",
-    "filename": "FLORA-RLVR-论文阅读总览-2026-10-22.md",
-    "href": "notes/FLORA-RLVR-%E8%AE%BA%E6%96%87%E9%98%85%E8%AF%BB%E6%80%BB%E8%A7%88-2026-10-22.html",
-    "summary": "整理日期：2026-10-22。共 11 篇独立论文笔记，每篇一个 Markdown 文件；本页提供阅读索引和跨论文分析。 本组笔记根据来稿整理，补充原始论文、作者项目页与模型卡链接，恢复公式、表格和图示。核心论文详细展开，背景论文分别成篇。末尾的“下一个”等粘贴占位内容未保留。Z Tech 专访未提供可核验的原文附件或链接，因此这里按来稿中的论文名单组织，"
-  },
-  {
-    "title": "NVIDIA FLORA 论文解读：为机器人数据生成语言与奖励监督",
-    "filename": "FLORA.md",
-    "href": "notes/FLORA.html",
-    "summary": "它的核心贡献是让几种原本相对独立的标注能力形成可规模化部署的系统：给动作定位时间、为动作生成语言描述、评价整段任务的完成程度，以及找出执行过程中的异常。控制策略负责产生动作；FLORA 则为已经发生的操作提供标签和反馈。 NVIDIA 报告，该系统已用于 GR00T 数据引擎，并在 512 张 GB300 GPU 上达到每天标注 20 万小时视频的处理规模。"
-  },
-  {
-    "title": "Fleet Learning：机器人集群学习",
-    "filename": "Fleet-Learning.md",
-    "href": "notes/Fleet-Learning.html",
-    "summary": "本文根据提供的概念解读整理。 Fleet Learning 指多个已部署机器人共同收集经验，并通过共享策略更新，让整个集群受益。"
-  },
-  {
-    "title": "Flow Matching and Diffusion Models（二）：为什么回归速度就能学会生成",
-    "filename": "Flow Matching and Diffusion Models（二）.md",
-    "href": "notes/Flow%20Matching%20and%20Diffusion%20Models%EF%BC%88%E4%BA%8C%EF%BC%89.html",
-    "summary": "Flow Matching 的核心思路是：先设计一条从噪声到数据的概率路径，再训练网络预测沿这条路径运动的速度。 真正巧妙的地方在于，我们不需要直接算出整个数据分布对应的速度场。训练时，只要随机取一个数据样本和一个噪声样本，构造中间状态和目标速度，做普通的均方误差回归，就能在期望意义上学到所需的边缘向量场。"
-  },
-  {
-    "title": "FoveaVLA：让 VLA 学会主动决定下一步看哪里",
-    "filename": "FoveaVLA.md",
-    "href": "notes/FoveaVLA.html",
-    "summary": "论文：FoveaVLA: Foveation Actions Replace the Wrist Camera in VLAs FoveaVLA 研究的是一个很实际的问题：机器人不一定需要一台绑在手腕上的相机，VLA 也可以在生成动作的同时，预测下一次应该从外部相机画面的哪个区域获取高清视觉信息。"
-  },
-  {
-    "title": "Generate, Track, Improve：用强化学习改进全身运动生成器",
-    "filename": "Generate-Track-Improve.md",
-    "href": "notes/Generate-Track-Improve.html",
-    "summary": "项目主页 这篇工作的出发点很直接：人形机器人的运动生成器可以生成看起来合理的全身轨迹，但这些轨迹未必适合真实地形和当前动力学状态。传统做法往往只训练一个 tracker，让它尽量跟随生成的参考动作。Generate, Track, Improve（GTI）进一步把强化学习反馈传回运动生成器，让生成器自己学会提出更容易执行、也更适合环境的动作。"
-  },
-  {
-    "title": "GeoPT：让廉价几何数据为物理仿真提供预训练信号",
-    "filename": "GeoPT.md",
-    "href": "notes/GeoPT.html",
-    "summary": "一辆车的 3D 模型相对容易获得，但计算它在某种来流条件下的压力和流速分布，可能需要昂贵的 CFD 求解。神经仿真器虽然推理快，训练时却仍然需要大量这样的求解结果。 GeoPT 的切入点是：先在几何体周围构造廉价的合成运动，让模型学习方向、边界和空间位置之间的关系，再用物理仿真数据学习具体物理场。 预训练不依赖真实物理标签，下游微调仍然需要。"
-  },
-  {
-    "title": "HDMI：从人类视频学习人形机器人全身交互控制",
-    "filename": "HDMI.md",
-    "href": "notes/HDMI.html",
-    "summary": "> 论文：HDMI: Learning Interactive Humanoid Whole-Body Control from Human Videos   > 团队：CMU LeCAR Lab；Haoyang Weng、Yitang Li 等  "
-  },
-  {
-    "title": "HTT：不同触觉传感器，能不能学到共同的接触表征？",
-    "filename": "HTT.md",
-    "href": "notes/HTT.html",
-    "summary": "拧螺丝时，机器人需要知道的是有没有抓稳、接触位置是否变化、物体是否开始滑动。但传感器给出的可能是一张形变图，也可能是一组力和力矩。HTT（Heterogeneous Tactile Transformer）想把这些不同形式的读数，转成可迁移的触觉特征。 这篇笔记以提供的 SharpaDex 解读为线索，并对照了论文。实验数字沿用所给材料；对 SharpaDe"
   },
   {
     "title": "HiRE：用真实成功与失败，修正机器人强化学习的视觉奖励",
     "filename": "HiRE.md",
     "href": "notes/HiRE.html",
+    "markdown": "notes/HiRE.md",
+    "updated": "2026-10-31T14:36:33.325Z",
     "summary": "机器人把瓶子弄掉了，机械臂却继续移动到目标盘子旁边。从画面布局看，它越来越像成功示范的最后一帧；从任务结果看，它已经没有把瓶子运过去。 这就是 HiRE 要解决的问题：视觉上接近目标，不一定意味着控制上取得进展。 它使用冻结视觉编码器，再用执行中积累的成功与失败经验，在线修正奖励。策略仍然学习原任务，改变的是中间反馈。"
-  },
-  {
-    "title": "Beyond the 80/20 Rule 论文解读：把强化学习集中到推理分叉",
-    "filename": "High-Entropy-Minority-Tokens.md",
-    "href": "notes/High-Entropy-Minority-Tokens.html",
-    "summary": "这篇论文把“RL 在优化什么”的分析粒度，从整条推理轨迹推进到具体 token 位置，为 credit assignment 提供了一个简单且可检验的切入点。来源：论文 给定问题 $x$ 和已经生成的前缀 $y_{<t}$，当前位置预测分布的熵为："
   },
   {
     "title": "Hindsight：怎样从已经发生的结果里，提取新的学习信号？",
     "filename": "Hindsight.md",
     "href": "notes/Hindsight.html",
+    "markdown": "notes/Hindsight.md",
+    "updated": "2026-10-31T13:32:10.973Z",
     "summary": "Hindsight 最值得关注的地方，是它允许学习系统在看到结果后，重新判断一段经验可以教会模型什么。 例如，让机器人“把绿色容器放进碗里”，机器人却把胶带放进了碗里。原任务确实失败，但这段经验仍然展示了一种有用行为：把某个物体放入碗中。如果给这段行为配上符合事实的新目标，就得到了一份额外监督。"
   },
   {
-    "title": "I-BFM：用奖励调用人形机器人的交互技能",
-    "filename": "I-BFM-人形交互策略.md",
-    "href": "notes/I-BFM-%E4%BA%BA%E5%BD%A2%E4%BA%A4%E4%BA%92%E7%AD%96%E7%95%A5.html",
-    "summary": "论文： I-BFM: Reward-Conditioned Robust Humanoid Interaction via Unsupervised Reinforcement Learning I-BFM 研究一个很有吸引力的方向：能不能先训练一个人形机器人策略族，之后只给它新的奖励函数，就让它学会搬运、推动、踢击和恢复，而不必每个任务都重新做完整的策略梯"
+    "title": "VaM：把 Value Function 变成机器人执行时的进度记忆",
+    "filename": "VaM.md",
+    "href": "notes/VaM.html",
+    "markdown": "notes/VaM.md",
+    "updated": "2026-10-31T10:45:45.761Z",
+    "summary": "机器人在桌上抓一块布，图像看起来差不多，实际却可能处于两种状态：刚刚抓稳，应该继续折叠；或者已经滑脱，需要张开夹爪重新抓取。只看当前画面，甚至看一小段视觉历史，策略也可能分不清。 VaM 的办法是：把最近几次 Value 预测保存下来，让动作策略一起读取。 策略不仅看到物体现在在哪里，还得到一个与任务目标有关的历史信号：此前是否在推进、是否停滞、是否出现退步"
   },
   {
-    "title": "InterEvolve：在推理时进化奖励程序",
-    "filename": "InterEvolve-奖励程序进化.md",
-    "href": "notes/InterEvolve-%E5%A5%96%E5%8A%B1%E7%A8%8B%E5%BA%8F%E8%BF%9B%E5%8C%96.html",
-    "summary": "论文与项目： InterEvolve: Test-Time Evolution of Reward Programs for Humanoid Loco-Manipulation InterEvolve 的想法是：如果已经有一个会走、会接触物体的人形机器人控制器，面对新任务时，是否不必重新训练整套策略，而是让 Agent 在测试时搜索一段更好的奖励程序？"
+    "title": "多模态生成详解：从扩散模型、音频 Token 到统一多模态 LLM",
+    "filename": "Multimodal-Generation.md",
+    "href": "notes/Multimodal-Generation.html",
+    "markdown": "notes/Multimodal-Generation.md",
+    "updated": "2026-10-30T08:14:42.659Z",
+    "summary": "这篇笔记围绕一个问题展开：一个原本通过预测下一个 token 来写文字的模型，怎样才能生成图片、声音和视频？ 基础材料是 Maarten Grootendorst 的 A Visual Guide to Multimodal Generation，发表于 2026 年 10 月 29 日。下面沿着原文的技术主线重新组织讲解，并补充训练目标、推理过程、张量形状"
   },
   {
-    "title": "Intersting Idea",
-    "filename": "Intersting Idea.md",
-    "href": "notes/Intersting%20Idea.html",
-    "summary": "这里记录很傻逼的想法 能不能用c++或者python做一个“人脸识别”但是不是真的识别，只是把轮廓画出来，但是用ASCII马画的"
+    "title": "AI 性能分析与插装：工具原理、Attention 优化与集群诊断",
+    "filename": "AI性能分析与插装.md",
+    "href": "notes/AI%E6%80%A7%E8%83%BD%E5%88%86%E6%9E%90%E4%B8%8E%E6%8F%92%E8%A3%85.html",
+    "markdown": "notes/AI%E6%80%A7%E8%83%BD%E5%88%86%E6%9E%90%E4%B8%8E%E6%8F%92%E8%A3%85.md",
+    "updated": "2026-10-30T04:45:15.358Z",
+    "summary": "AI 性能分析要回答一个具体问题：程序为什么慢，哪些观测支持这个判断，修改以后完整任务到底快了多少？ 这份笔记以一个两层 TinyDecoder 的 Attention 优化为主例。报告中的四步 decode 从 18.206ms 降到 3.099ms，约加速 5.9 倍。理解这个结果，需要把算子调用次数、张量形状、CPU/GPU 时间线、kernel 硬件"
   },
   {
-    "title": "LLM-RL 的 Baseline 评测争议：分数提升能否证明能力提升？",
-    "filename": "LLM-RL-Baseline-Evaluation-Critique.md",
-    "href": "notes/LLM-RL-Baseline-Evaluation-Critique.html",
-    "summary": "> 原文：Incorrect Baseline Evaluations Call into Question Recent LLM-RL Claims   > 作者：Nikhil Chandak、Shashwat Goel、Ameya Prabhu  "
+    "title": "PixelBench：让语言模型用文本写像素，再看重建能否帮助理解",
+    "filename": "PixelBench.md",
+    "href": "notes/PixelBench.html",
+    "markdown": "notes/PixelBench.md",
+    "updated": "2026-10-29T16:59:16.067Z",
+    "summary": "给语言模型一个“兔子”的概念，它可以写出一段描述，也可以输出 SVG。PixelBench 再往下走了一层：让模型用已有文本词表，直接写出调色板和二维颜色索引网格，用这些文字确定每一个像素。 然后把问题反过来：只给模型这串像素文本，不展示渲染图，它能认出画的是什么吗？如果训练一个 VLM 输出这种重建结果，普通图像理解能力会不会随之改善？"
   },
   {
-    "title": "LLaDA 论文解读：用掩码去噪实现大规模语言建模",
-    "filename": "LLaDA.md",
-    "href": "notes/LLaDA.html",
-    "summary": "训练时，对完整文本的部分位置施加 mask，让模型根据可见 token 恢复被遮住的内容。通过覆盖不同掩码比例，模型学习从不同程度的不完整文本中预测缺失部分。 生成时，可以从大段 [MASK] 开始，在多个去噪步骤中逐步填充内容。一个步骤可以处理多个位置，生成顺序也不必严格从左到右。来源：论文"
-  },
-  {
-    "title": "Limit of RLVR 论文解读：成功率提高，是否意味着能力边界扩大",
-    "filename": "Limit-of-RLVR.md",
-    "href": "notes/Limit-of-RLVR.html",
-    "summary": "它最有价值的贡献是一套评价视角：除了问模型“这次能否做对”，还要问“多给一些尝试，它究竟能覆盖哪些问题”。来源：论文 假设一个 Base Model 对某道题存在两条路径：错误路径 A 的采样概率为 99%，正确路径 B 为 1%。经过 RLVR 后，正确路径 B 的概率提高到 80%。"
-  },
-  {
-    "title": "Long-WAM：用长时历史和自回归视频预训练扩展 World-Action Model",
-    "filename": "Long-WAM.md",
-    "href": "notes/Long-WAM.html",
-    "summary": "项目主页 Long-WAM 关注一个经常被低估的问题：机器人动作不应该只依赖当前一帧图像。开门、堆叠、整理和动态交互都需要知道物体刚才如何运动、任务已经进行到哪一步，以及之前的动作是否生效。Long-WAM 通过更长的视觉历史和自回归视频预训练，让 World-Action Model 获得更强的时序状态估计能力。"
+    "title": "RecA：让模型更好地生成自己已经能够理解的视觉内容",
+    "filename": "RecA.md",
+    "href": "notes/RecA.html",
+    "markdown": "notes/RecA.md",
+    "updated": "2026-10-29T16:33:56.258Z",
+    "summary": "一个模型可以看图回答“这是一颗黄色西兰花”，但让它画黄色西兰花时，它仍然可能画成绿色。识别了对象、属性和位置关系，并不意味着生成时能把这些信息准确落实到图像中。 论文：Reconstruction Alignment Improves Unified Multimodal Models，Ji Xie、Trevor Darrell、Luke Zettlemoy"
   },
   {
     "title": "Metatron：让 Agent 写运动目标，让控制器协调全身",
     "filename": "Metatron.md",
     "href": "notes/Metatron.html",
+    "markdown": "notes/Metatron.md",
+    "updated": "2026-10-29T16:16:55.182Z",
     "summary": "让人形机器人跨过一个障碍物，可以为跨栏重新训练策略，也可以准备一段完整跳跃动作让它跟踪。Metatron 提供了另一个接口：高层代码指定身体部分的目标位置、朝向和到达时间，冻结的控制器根据当前状态补全全身运动。 这使 Coding Agent 有了一个比较具体的工作对象。它可以修改起跳时机、落脚位置、阶段切换和恢复条件，然后在仿真中测试；机器人关节之间怎样配"
+  },
+  {
+    "title": "FACT：把人类的接触经验用来训练机器人灵巧操作",
+    "filename": "FACT.md",
+    "href": "notes/FACT.html",
+    "markdown": "notes/FACT.md",
+    "updated": "2026-10-29T12:22:29.059Z",
+    "summary": "拧开瓶盖时，手指的位置很重要，但位置相同不代表操作相同。夹得太松，转动时会打滑；夹得太紧，又可能让物体变形。普通视频能够记录手怎样运动，却很难确定手指到底用了多大的力。 论文：FACT: A Multimodal Force–Action–Track Foundation Model for Human-to-Robot Dexterity，2026 年 1"
+  },
+  {
+    "title": "Tactile：从接触力学到数据驱动操作",
+    "filename": "Tactile.md",
+    "href": "notes/Tactile.html",
+    "markdown": "notes/Tactile.md",
+    "updated": "2026-10-28T19:28:51.036Z",
+    "summary": "机器人把手指移到瓶盖两侧，视觉上已经“抓住”了，但它可能只碰到了边缘，也可能正在打滑，还可能把瓶子捏变形。触觉要解决的，就是这些发生在接触之后、外部相机又很难看清的问题。 这篇笔记根据所给《两万字入门 Tactile：接触力学到数据驱动操作》整理，补充基础公式和研究思考。对应英文综述为 Tactile-Based Robotic Manipulation: "
+  },
+  {
+    "title": "Behavioral Cloning Mystery：为什么行为克隆的 loss 和成功率经常对不上？",
+    "filename": "Behavioral-Cloning-Mystery.md",
+    "href": "notes/Behavioral-Cloning-Mystery.html",
+    "markdown": "notes/Behavioral-Cloning-Mystery.md",
+    "updated": "2026-10-28T17:53:45.298Z",
+    "summary": "Seohong Park 在这篇博客里讨论了四个看起来反直觉的现象：验证损失上升，机器人反而做得更好；每步重新决策的策略失败，执行动作块的策略却成功；简单状态输入也需要很大的网络；输入只改变缩放比例，成功率就明显不同。 这些观察指向一个共同问题：行为克隆在示范数据上拟合动作，部署时却必须处理自己造成的状态变化。两种分布之间的差别，会让离线指标与执行表现脱节。"
+  },
+  {
+    "title": "SuperMimic：通过可微世界模型训练人形机器人全身控制",
+    "filename": "SuperMimic.md",
+    "href": "notes/SuperMimic.html",
+    "markdown": "notes/SuperMimic.md",
+    "updated": "2026-10-27T12:02:51.208Z",
+    "summary": "走路、跳跃、翻滚和舞蹈的目标各不相同，但执行它们的是同一台机器人。SuperMimic 利用这部分共享知识：学习一个身体动力学模型，再通过模型中的动作—状态梯度，训练覆盖大量参考动作的控制策略。 论文：SuperMimic: Scaling Humanoid Whole-Body Control with One Differentiable World M"
+  },
+  {
+    "title": "ALPS：世界模型需要什么样的视觉状态编码器？",
+    "filename": "ALPS.md",
+    "href": "notes/ALPS.html",
+    "markdown": "notes/ALPS.md",
+    "updated": "2026-10-23T09:55:37.400Z",
+    "summary": "世界模型通常先把图像编码成 latent，再预测动作会怎样改变 latent。如果第一步已经丢掉物体的位置、姿态或局部关系，后面的动力学模型就很难把这些信息重新找回来。 ALPS 关注的就是这个起点：同一套视觉 token，能不能既保留物理状态，又与语言对齐，还能被解码回图像？"
+  },
+  {
+    "title": "PhysWord：给物理经验一个可以复用的动作词",
+    "filename": "PhysWord.md",
+    "href": "notes/PhysWord.html",
+    "markdown": "notes/PhysWord.md",
+    "updated": "2026-10-23T08:36:05.804Z",
+    "summary": "“pick”可以告诉机器人下一步要抓取，但没有说清楚物体会怎样移动、手指怎样接触、抓取后是否容易滑落。直接预测连续的视觉和触觉特征，又缺少一种清楚的方式，把不同场景里的“抓取经验”组织到一起。 论文：Physical Words: A Vocabulary for Structuring Latent Reasoning in Robot Manipulat"
+  },
+  {
+    "title": "Transolver：把大量网格点变成少量物理状态，再做 Attention",
+    "filename": "Transolver.md",
+    "href": "notes/Transolver.html",
+    "markdown": "notes/Transolver.md",
+    "updated": "2026-10-22T19:39:09.270Z",
+    "summary": "Transolver 研究的是一个很具体的问题：物理仿真有大量空间采样点，但模型是否必须让每两个点都直接计算一次 Attention？ 它提出先把点的特征聚合成少量可学习的 physics-aware tokens，在这些 token 之间交换信息，再把结果还原到每个点。这样既保留逐点预测接口，又降低全局交互的计算成本。"
+  },
+  {
+    "title": "GeoPT：让廉价几何数据为物理仿真提供预训练信号",
+    "filename": "GeoPT.md",
+    "href": "notes/GeoPT.html",
+    "markdown": "notes/GeoPT.md",
+    "updated": "2026-10-22T19:23:25.488Z",
+    "summary": "一辆车的 3D 模型相对容易获得，但计算它在某种来流条件下的压力和流速分布，可能需要昂贵的 CFD 求解。神经仿真器虽然推理快，训练时却仍然需要大量这样的求解结果。 GeoPT 的切入点是：先在几何体周围构造廉价的合成运动，让模型学习方向、边界和空间位置之间的关系，再用物理仿真数据学习具体物理场。 预训练不依赖真实物理标签，下游微调仍然需要。"
+  },
+  {
+    "title": "SynD：主动制造错误地图，测试模型到底有多相信先验",
+    "filename": "SynD.md",
+    "href": "notes/SynD.html",
+    "markdown": "notes/SynD.md",
+    "updated": "2026-10-22T19:18:35.252Z",
+    "summary": "如果一个地图构建模型在正确先验帮助下表现很好，我们还不知道它遇到旧地图、定位偏差或道路改建时会怎样。等真实世界自然积累这些错误，成本很高，也很难控制变量。 SynD（Synthetic Deviation）提供了一种办法：从原有地图出发，生成类型和强度可控的偏差，再观察依赖先验的模型如何退化。 它的主要贡献是错误先验构造与鲁棒性评测，不是另一个地图预测网络。"
+  },
+  {
+    "title": "PriorMaskMap：旧地图有用，但要先判断哪里可信",
+    "filename": "PriorMaskMap.md",
+    "href": "notes/PriorMaskMap.html",
+    "markdown": "notes/PriorMaskMap.md",
+    "updated": "2026-10-22T19:18:35.232Z",
+    "summary": "旧地图告诉自动驾驶系统某处有三条车道，但施工后实际只剩两条。模型如果无条件使用先验，就可能把已经消失的车道重新预测出来；完全丢弃旧地图，又失去了它在遮挡和远距离区域的帮助。 PriorMaskMap 的核心思路是：为局部先验估计可靠性，再让这种可靠性参与地图查询构造和特征融合。 先验可以保留，但不应被默认视为当前世界的真值。"
   },
   {
     "title": "Mimir：记忆不只保存过去，还要支持下一步行动",
     "filename": "Mimir.md",
     "href": "notes/Mimir.html",
+    "markdown": "notes/Mimir.md",
+    "updated": "2026-10-22T19:16:17.467Z",
     "summary": "机器人刚把杯子从桌上拿走，相机随后转向柜子。接下来，它需要知道的不只是“之前看见过一个杯子”，还包括杯子现在是否拿在手里、放置任务有没有完成，以及哪些寻找位置已经被证明不对。 Mimir 把这些信息显式分成 World Memory 和 Task Memory，再用 Dynamic Grounding 把当前目标绑定到世界中的具体对象。它关心的是行动所需的状"
   },
   {
     "title": "Move-Then-Operate：大幅移动和精细操作，要不要分开学？",
     "filename": "Move-Then-Operate.md",
     "href": "notes/Move-Then-Operate.html",
+    "markdown": "notes/Move-Then-Operate.md",
+    "updated": "2026-10-22T19:16:17.446Z",
     "summary": "按一个按钮，至少有两种明显不同的动作：先把手移动到附近，再对准、接触并按下去。前一段要求快速到位，后一段对位置和接触误差更敏感。 Move-Then-Operate（MTO）的核心想法是：让两个动作专家分别学习 Move 和 Operate，再由一个 Router 决定当前调用谁。 它在动作生成端引入行为阶段的划分，尝试减少两种动作分布之间的优化干扰。"
   },
   {
-    "title": "多模态生成详解：从扩散模型、音频 Token 到统一多模态 LLM",
-    "filename": "Multimodal-Generation.md",
-    "href": "notes/Multimodal-Generation.html",
-    "summary": "这篇笔记围绕一个问题展开：一个原本通过预测下一个 token 来写文字的模型，怎样才能生成图片、声音和视频？ 基础材料是 Maarten Grootendorst 的 A Visual Guide to Multimodal Generation，发表于 2026 年 10 月 29 日。下面沿着原文的技术主线重新组织讲解，并补充训练目标、推理过程、张量形状"
+    "title": "WM-Craftnet：用世界模型记住接触如何随动作变化",
+    "filename": "WM-Craftnet.md",
+    "href": "notes/WM-Craftnet.html",
+    "markdown": "notes/WM-Craftnet.md",
+    "updated": "2026-10-22T08:18:07.579Z",
+    "summary": "机器人手内旋转物体时，一帧图像很难告诉它物体是不是正在滑落。同样的手指姿态，可能对应稳定夹持，也可能只是掉落前的一瞬间。WM-Craftnet 的思路，是把视觉、触觉、本体感知和动作历史压成持续更新的交互状态，让策略利用这份状态来控制。 这篇笔记以提供的 SharpaDex 解读为线索，并对照论文核实方法定位；项目页提供演示。后文与 SharpaDex 的连"
   },
   {
-    "title": "PACE、ForeTac 与 ViTacX：触觉怎样从反馈信号变成动作选择的依据",
-    "filename": "PACE-ForeTac-ViTacX.md",
-    "href": "notes/PACE-ForeTac-ViTacX.html",
-    "summary": "插钥匙时，视觉帮助我们找到锁孔，手上的阻力则告诉我们有没有碰到边缘、是否需要退一点。抓薯片又多了一层要求：等到感觉它碎了再松手，已经太晚。机器人因此既需要读懂当前接触，也需要判断下一段动作会带来什么接触。 附件介绍的三项成果分别落在不同层次：PACE 将当前触觉用于动作生成与局部纠偏；ForeTac 预测候选动作的未来触觉，并用预测质量修改采样；ViTacX"
+    "title": "HTT：不同触觉传感器，能不能学到共同的接触表征？",
+    "filename": "HTT.md",
+    "href": "notes/HTT.html",
+    "markdown": "notes/HTT.md",
+    "updated": "2026-10-22T08:18:07.553Z",
+    "summary": "拧螺丝时，机器人需要知道的是有没有抓稳、接触位置是否变化、物体是否开始滑动。但传感器给出的可能是一张形变图，也可能是一组力和力矩。HTT（Heterogeneous Tactile Transformer）想把这些不同形式的读数，转成可迁移的触觉特征。 这篇笔记以提供的 SharpaDex 解读为线索，并对照了论文。实验数字沿用所给材料；对 SharpaDe"
   },
   {
-    "title": "PatternDex：用 Interaction Pattern 缩小灵巧手的 Embodiment Gap",
-    "filename": "PatternDex.md",
-    "href": "notes/PatternDex.html",
-    "summary": "项目主页 PatternDex 讨论灵巧手模仿学习中的一个核心难题：人的手和机器人的手在手指数目、关节结构、尺寸和可达范围上都不同，直接把人类手指姿态 retarget 到机器人，常常得到不可执行的动作。论文提出，与其模仿人手的每个关节，不如先学习跨形态都更稳定的手—物交互模式。"
+    "title": "T-Rex：让触觉及时参与动作修正",
+    "filename": "T-Rex.md",
+    "href": "notes/T-Rex.html",
+    "markdown": "notes/T-Rex.md",
+    "updated": "2026-10-22T08:10:30.716Z",
+    "summary": "机器人已经把卡片移到插槽附近，视觉上似乎对齐了，但继续推进时阻力突然增大。此时最需要的往往不是重新理解整幅图像，而是根据刚刚发生的接触，及时改变姿态和施力方式。 T-Rex 讨论的就是这种能力：视觉提供操作方向，触觉在接触过程中修正动作。 它既研究如何编码触觉的时间变化，也研究如何让这些变化更快地影响正在生成的动作。"
   },
   {
-    "title": "PhysWord：给物理经验一个可以复用的动作词",
-    "filename": "PhysWord.md",
-    "href": "notes/PhysWord.html",
-    "summary": "“pick”可以告诉机器人下一步要抓取，但没有说清楚物体会怎样移动、手指怎样接触、抓取后是否容易滑落。直接预测连续的视觉和触觉特征，又缺少一种清楚的方式，把不同场景里的“抓取经验”组织到一起。 论文：Physical Words: A Vocabulary for Structuring Latent Reasoning in Robot Manipulat"
+    "title": "DexTeleop-0：让遥操作在接触之后还能继续做对",
+    "filename": "DexTeleop-0.md",
+    "href": "notes/DexTeleop-0.html",
+    "markdown": "notes/DexTeleop-0.md",
+    "updated": "2026-10-22T08:10:30.691Z",
+    "summary": "人手做出一个捏住瓶盖的动作，机器人复现了相似的姿态，并不意味着它真的捏稳了。手指长度、关节轴、接触位置稍有差别，原本用于转动瓶盖的力，就可能变成挤压、滑动，或者把瓶子推倒。 DexTeleop-0 的思路是：人给出操作意图，触觉闭环修正接触细节。 它把动作重定向得到的关节目标当作名义指令，再用力反馈计算小幅修正，让遥操作从“形状像人手”进一步走向“接触能完成"
   },
   {
-    "title": "Physical AI 参考：从机器人理论到真实部署",
-    "filename": "Physical AI参考-Russ Tedrake.md",
-    "href": "notes/Physical%20AI%E5%8F%82%E8%80%83-Russ%20Tedrake.html",
-    "summary": "Russ Tedrake 在这期访谈里谈到的核心问题，不是某个模型能不能在演示中完成动作，而是机器人技术是否终于具备了进入真实世界的完整条件：更好的学习算法、更成熟的硬件、更低的制造成本、更大的投资和更多可以部署的机器人。 这次机器人热潮与过去的不同之处，可能不在于某一项技术突然解决了所有问题，而在于多个环节开始同时变得可用。真正的下一步，是把实验室里的能力"
+    "title": "SharpaDex：把双手接触过程变成可以学习的数据",
+    "filename": "SharpaDex.md",
+    "href": "notes/SharpaDex.html",
+    "markdown": "notes/SharpaDex.md",
+    "updated": "2026-10-22T08:05:25.582Z",
+    "summary": "拧瓶盖最难的部分，往往被手指挡住了。相机可以看到手已经碰到瓶盖，却不一定能判断捏持是否稳定、瓶盖有没有滑动，以及两只手是不是在相互较劲。 SharpaDex 的价值，是把这些过程中的视觉、指尖受力、触觉形变和动作同步记录下来。它让研究者能够直接研究接触如何影响动作，而不只是让模型从 RGB 中猜测接触。"
   },
   {
-    "title": "PixelBench：让语言模型用文本写像素，再看重建能否帮助理解",
-    "filename": "PixelBench.md",
-    "href": "notes/PixelBench.html",
-    "summary": "给语言模型一个“兔子”的概念，它可以写出一段描述，也可以输出 SVG。PixelBench 再往下走了一层：让模型用已有文本词表，直接写出调色板和二维颜色索引网格，用这些文字确定每一个像素。 然后把问题反过来：只给模型这串像素文本，不展示渲染图，它能认出画的是什么吗？如果训练一个 VLM 输出这种重建结果，普通图像理解能力会不会随之改善？"
+    "title": "AlphaEvolve 论文解读：把程序修改接入可验证的进化搜索",
+    "filename": "AlphaEvolve.md",
+    "href": "notes/AlphaEvolve.html",
+    "markdown": "notes/AlphaEvolve.md",
+    "updated": "2026-10-22T05:16:19.341Z",
+    "summary": "如果每次都让模型从头回答同一个问题，计算主要花在重复采样。AlphaEvolve 将完整程序及其修改作为探索对象，让已经验证有效的候选程序成为下一轮改进的起点。 系统中的主要循环可以概括为："
   },
   {
-    "title": "PriorMaskMap：旧地图有用，但要先判断哪里可信",
-    "filename": "PriorMaskMap.md",
-    "href": "notes/PriorMaskMap.html",
-    "summary": "旧地图告诉自动驾驶系统某处有三条车道，但施工后实际只剩两条。模型如果无条件使用先验，就可能把已经消失的车道重新预测出来；完全丢弃旧地图，又失去了它在遮挡和远距离区域的帮助。 PriorMaskMap 的核心思路是：为局部先验估计可靠性，再让这种可靠性参与地图查询构造和特征融合。 先验可以保留，但不应被默认视为当前世界的真值。"
+    "title": "Curriculum RL 论文解读：先找到能力边界，再引入针对性指导",
+    "filename": "Curriculum-RL.md",
+    "href": "notes/Curriculum-RL.html",
+    "markdown": "notes/Curriculum-RL.md",
+    "updated": "2026-10-22T05:16:19.341Z",
+    "summary": "如果当前模型对某个难题采样得到的回答全部错误，组相对奖励就缺乏可区分的正确路径。继续强化原有轨迹，未必能让训练进入新的有效区域。 论文据此把课程组织与新轨迹来源结合，关注如何让边界附近的问题产生可学习信号。"
+  },
+  {
+    "title": "DAPO 论文解读：让大规模推理强化学习稳定工作",
+    "filename": "DAPO.md",
+    "href": "notes/DAPO.html",
+    "markdown": "notes/DAPO.md",
+    "updated": "2026-10-22T05:16:19.341Z",
+    "summary": "把可验证结果奖励接到语言模型上，还需要处理训练中探索不足、采样组没有奖励差异、回答长度差异以及超长截断等问题。DAPO 基于 GRPO 风格的组相对优化，对这些环节作出系统性调整。 项目报告，在 Qwen2.5-32B Base 上取得 AIME 2024 的 50% 准确率，并公开训练配方、数据、verifier、模型及基础设施材料。来源：项目主页"
+  },
+  {
+    "title": "DenseNet 论文解读：通过密集连接复用特征",
+    "filename": "DenseNet.md",
+    "href": "notes/DenseNet.html",
+    "markdown": "notes/DenseNet.md",
+    "updated": "2026-10-22T05:16:19.341Z",
+    "summary": "对于同一个 dense block 中的第 $\\ell$ 层： x_{\\ell}=H_{\\ell}([x_0,x_1,\\ldots,x_{\\ell-1}])."
+  },
+  {
+    "title": "论文阅读笔记：机器人数据引擎、推理探索与自我改进",
+    "filename": "FLORA-RLVR-论文阅读总览-2026-10-22.md",
+    "href": "notes/FLORA-RLVR-%E8%AE%BA%E6%96%87%E9%98%85%E8%AF%BB%E6%80%BB%E8%A7%88-2026-10-22.html",
+    "markdown": "notes/FLORA-RLVR-%E8%AE%BA%E6%96%87%E9%98%85%E8%AF%BB%E6%80%BB%E8%A7%88-2026-10-22.md",
+    "updated": "2026-10-22T05:16:19.341Z",
+    "summary": "整理日期：2026-10-22。共 11 篇独立论文笔记，每篇一个 Markdown 文件；本页提供阅读索引和跨论文分析。 本组笔记根据来稿整理，补充原始论文、作者项目页与模型卡链接，恢复公式、表格和图示。核心论文详细展开，背景论文分别成篇。末尾的“下一个”等粘贴占位内容未保留。Z Tech 专访未提供可核验的原文附件或链接，因此这里按来稿中的论文名单组织，"
+  },
+  {
+    "title": "LLaDA 论文解读：用掩码去噪实现大规模语言建模",
+    "filename": "LLaDA.md",
+    "href": "notes/LLaDA.html",
+    "markdown": "notes/LLaDA.md",
+    "updated": "2026-10-22T05:16:19.341Z",
+    "summary": "训练时，对完整文本的部分位置施加 mask，让模型根据可见 token 恢复被遮住的内容。通过覆盖不同掩码比例，模型学习从不同程度的不完整文本中预测缺失部分。 生成时，可以从大段 [MASK] 开始，在多个去噪步骤中逐步填充内容。一个步骤可以处理多个位置，生成顺序也不必严格从左到右。来源：论文"
   },
   {
     "title": "ProRL 论文解读：训练时长与探索控制怎样改变能力覆盖",
     "filename": "ProRL.md",
     "href": "notes/ProRL.html",
+    "markdown": "notes/ProRL.md",
+    "updated": "2026-10-22T05:16:19.341Z",
     "summary": "Limit of RLVR 观察到，部分训练设置提高 pass@1 的同时，大 k 的 pass@k 没有同步改善。ProRL 则追问：这一现象会不会取决于训练持续时间、探索约束和任务分布？ 因此，ProRL 的重点是研究 RL 运行条件怎样影响最终可达的解题范围。"
   },
   {
-    "title": "QCP：让机器人选择“做得多好”，再用实际表现更新这个标准",
-    "filename": "QCP.md",
-    "href": "notes/QCP.html",
-    "summary": "同样是把杯子放上托盘，机器人可以慢慢放稳，也可以快速完成；同样都算成功，动作质量却差很多。如果训练数据把这些执行方式混在一起，普通行为克隆能学会完成任务，却没有直接的接口让人选择“这次快一点”或者“这次稳一点”。 QCP 的做法很直观：先按真实执行质量给轨迹分档，让策略学会按档位行动；再让它尝试最高档，把新执行按实际表现重新标注，加入数据后继续训练。 最高档"
+    "title": "The Flexibility Trap 论文解读：生成顺序怎样改变推理探索",
+    "filename": "The-Flexibility-Trap.md",
+    "href": "notes/The-Flexibility-Trap.html",
+    "markdown": "notes/The-Flexibility-Trap.md",
+    "updated": "2026-10-22T05:16:19.341Z",
+    "summary": "JustGRPO 是这篇论文提出的方法和开源实现名称，与论文属于同一项工作。来源：项目主页 传统 Autoregressive（AR）模型按从左到右的顺序生成："
   },
   {
-    "title": "QF3：用 Filtered Q-Gradients 稳定训练 Flow Policy",
-    "filename": "QF3.md",
-    "href": "notes/QF3.html",
-    "summary": "项目主页 QF3 针对的是一个很实际的问题：已经有预训练的 Flow Policy，想用离线或 off-policy 强化学习把它调得更好，应该如何利用 Critic 的 Q 值而不把策略推到数据分布之外？论文的答案是过滤 Q 梯度，只允许它在 Replay Buffer 动作附近有限地改变 Flow Matching 的速度场。"
+    "title": "How Far Is Video Generation from World Model 论文解读：用物理外推检验世界模型",
+    "filename": "Video-Generation-as-World-Model.md",
+    "href": "notes/Video-Generation-as-World-Model.html",
+    "markdown": "notes/Video-Generation-as-World-Model.md",
+    "updated": "2026-10-22T05:16:19.341Z",
+    "summary": "视频模型可能在熟悉场景中生成合理运动，但学习到物理规律意味着：即使速度、初始状态或因素组合发生变化，也能继续预测满足规律的未来。 论文因此评价三种泛化情形："
+  },
+  {
+    "title": "NVIDIA FLORA 论文解读：为机器人数据生成语言与奖励监督",
+    "filename": "FLORA.md",
+    "href": "notes/FLORA.html",
+    "markdown": "notes/FLORA.md",
+    "updated": "2026-10-22T05:16:19.340Z",
+    "summary": "它的核心贡献是让几种原本相对独立的标注能力形成可规模化部署的系统：给动作定位时间、为动作生成语言描述、评价整段任务的完成程度，以及找出执行过程中的异常。控制策略负责产生动作；FLORA 则为已经发生的操作提供标签和反馈。 NVIDIA 报告，该系统已用于 GR00T 数据引擎，并在 512 张 GB300 GPU 上达到每天标注 20 万小时视频的处理规模。"
+  },
+  {
+    "title": "Beyond the 80/20 Rule 论文解读：把强化学习集中到推理分叉",
+    "filename": "High-Entropy-Minority-Tokens.md",
+    "href": "notes/High-Entropy-Minority-Tokens.html",
+    "markdown": "notes/High-Entropy-Minority-Tokens.md",
+    "updated": "2026-10-22T05:16:19.340Z",
+    "summary": "这篇论文把“RL 在优化什么”的分析粒度，从整条推理轨迹推进到具体 token 位置，为 credit assignment 提供了一个简单且可检验的切入点。来源：论文 给定问题 $x$ 和已经生成的前缀 $y_{<t}$，当前位置预测分布的熵为："
+  },
+  {
+    "title": "Limit of RLVR 论文解读：成功率提高，是否意味着能力边界扩大",
+    "filename": "Limit-of-RLVR.md",
+    "href": "notes/Limit-of-RLVR.html",
+    "markdown": "notes/Limit-of-RLVR.md",
+    "updated": "2026-10-22T05:16:19.340Z",
+    "summary": "它最有价值的贡献是一套评价视角：除了问模型“这次能否做对”，还要问“多给一些尝试，它究竟能覆盖哪些问题”。来源：论文 假设一个 Base Model 对某道题存在两条路径：错误路径 A 的采样概率为 99%，正确路径 B 为 1%。经过 RLVR 后，正确路径 B 的概率提高到 80%。"
   },
   {
     "title": "RL-Kernel：让强化学习的训练与推理真正执行同一个策略",
     "filename": "RL-Kernel.md",
     "href": "notes/RL-Kernel.html",
+    "markdown": "notes/RL-Kernel.md",
+    "updated": "2026-10-20T17:14:33.458Z",
     "summary": "RL-Kernel 是面向大语言模型强化学习后训练的基础设施，关注 PPO、GRPO 等流程中的训练—推理数值一致性，以及 GPU 算子的显存和计算效率。 本笔记依据提供的项目解读整理，实验数字和支持范围沿用该材料，未独立核验当前版本。"
+  },
+  {
+    "title": "UNITAS：在三维空间中统一动作与世界变化",
+    "filename": "UNITAS.md",
+    "href": "notes/UNITAS.html",
+    "markdown": "notes/UNITAS.md",
+    "updated": "2026-10-20T10:33:13.920Z",
+    "summary": "论文：A 3D-Native World Action Model for Embodied Manipulation。 本笔记依据提供的论文解读整理，实验数字沿用该材料，未独立复核原文。"
+  },
+  {
+    "title": "EVA：让视频世界模型生成机器人能够执行的动作",
+    "filename": "EVA.md",
+    "href": "notes/EVA.html",
+    "markdown": "notes/EVA.md",
+    "updated": "2026-10-20T10:33:13.897Z",
+    "summary": "论文：Aligning Video World Models with Executable Robot Actions via Inverse Dynamics Rewards。 本笔记依据提供的论文解读整理，实验数字沿用该材料，未独立复核原文。"
   },
   {
     "title": "RePR：用生成模型的预测增益学习视觉表征",
     "filename": "RePR.md",
     "href": "notes/RePR.html",
+    "markdown": "notes/RePR.md",
+    "updated": "2026-10-20T10:30:34.239Z",
     "summary": "论文：Generative Representation Learning for Scalable Latent Tokenization 注意和RAE的区别（Representation Autoencoder）这个主要是学习一个“生成”的能力"
   },
   {
-    "title": "Realtime-Bench：想得对，还要来得及做",
-    "filename": "Realtime-Bench.md",
-    "href": "notes/Realtime-Bench.html",
-    "summary": "假设一个 Agent 正在竞价。它看到了当前价格，算出了合理报价，也知道应该点击哪个按钮。问题是，拍卖只剩 5 秒，它却用了 10 秒思考。最后输出的操作即使完全正确，也已经没有执行价值。 Realtime-Bench 研究的就是这类问题：模型在观测时刻想出的动作，到真正执行时是否还有效？ 它用动态网页和游戏，把推理消耗的时间放进任务本身，再用三种时钟区分任"
+    "title": "Flow Matching and Diffusion Models（二）：为什么回归速度就能学会生成",
+    "filename": "Flow Matching and Diffusion Models（二）.md",
+    "href": "notes/Flow%20Matching%20and%20Diffusion%20Models%EF%BC%88%E4%BA%8C%EF%BC%89.html",
+    "markdown": "notes/Flow%20Matching%20and%20Diffusion%20Models%EF%BC%88%E4%BA%8C%EF%BC%89.md",
+    "updated": "2026-10-20T00:29:40.118Z",
+    "summary": "Flow Matching 的核心思路是：先设计一条从噪声到数据的概率路径，再训练网络预测沿这条路径运动的速度。 真正巧妙的地方在于，我们不需要直接算出整个数据分布对应的速度场。训练时，只要随机取一个数据样本和一个噪声样本，构造中间状态和目标速度，做普通的均方误差回归，就能在期望意义上学到所需的边缘向量场。"
   },
   {
-    "title": "RecA：让模型更好地生成自己已经能够理解的视觉内容",
-    "filename": "RecA.md",
-    "href": "notes/RecA.html",
-    "summary": "一个模型可以看图回答“这是一颗黄色西兰花”，但让它画黄色西兰花时，它仍然可能画成绿色。识别了对象、属性和位置关系，并不意味着生成时能把这些信息准确落实到图像中。 论文：Reconstruction Alignment Improves Unified Multimodal Models，Ji Xie、Trevor Darrell、Luke Zettlemoy"
+    "title": "打假：别把 Benchmark 涨分直接写成推理能力进步",
+    "filename": "打假.md",
+    "href": "notes/%E6%89%93%E5%81%87.html",
+    "markdown": "notes/%E6%89%93%E5%81%87.md",
+    "updated": "2026-10-19T17:49:29.451Z",
+    "summary": "> 主题：LLM 推理与强化学习研究中的评测、机制解释和能力主张核查   > 材料范围：A Sober Look、Spurious Rewards，以及 Incorrect Baseline Evaluations 评论与作者讨论  "
+  },
+  {
+    "title": "A Sober Look：语言模型推理进展中的评测陷阱与可复现性",
+    "filename": "A-Sober-Look-Reasoning-Evaluation.md",
+    "href": "notes/A-Sober-Look-Reasoning-Evaluation.html",
+    "markdown": "notes/A-Sober-Look-Reasoning-Evaluation.md",
+    "updated": "2026-10-19T17:47:38.890Z",
+    "summary": "> 论文：A Sober Look at Progress in Language Model Reasoning: Pitfalls and Paths to Reproducibility   > 作者：Andreas Hochlehnert、Hardik Bhatnagar、Vishaal Udandarao、Samuel Albanie、Ameya "
+  },
+  {
+    "title": "LLM-RL 的 Baseline 评测争议：分数提升能否证明能力提升？",
+    "filename": "LLM-RL-Baseline-Evaluation-Critique.md",
+    "href": "notes/LLM-RL-Baseline-Evaluation-Critique.html",
+    "markdown": "notes/LLM-RL-Baseline-Evaluation-Critique.md",
+    "updated": "2026-10-19T17:47:38.869Z",
+    "summary": "> 原文：Incorrect Baseline Evaluations Call into Question Recent LLM-RL Claims   > 作者：Nikhil Chandak、Shashwat Goel、Ameya Prabhu  "
+  },
+  {
+    "title": "Spurious Rewards：随机奖励为什么也能提高部分模型的数学分数",
+    "filename": "Spurious-Rewards.md",
+    "href": "notes/Spurious-Rewards.html",
+    "markdown": "notes/Spurious-Rewards.md",
+    "updated": "2026-10-19T17:46:55.375Z",
+    "summary": "> 论文：Spurious Rewards: Rethinking Training Signals in RLVR   > 作者：Rulin Shao、Shuyue Stella Li、Rui Xin、Scott Geng 等  "
+  },
+  {
+    "title": "Fleet Learning：机器人集群学习",
+    "filename": "Fleet-Learning.md",
+    "href": "notes/Fleet-Learning.html",
+    "markdown": "notes/Fleet-Learning.md",
+    "updated": "2026-10-19T06:23:07.186Z",
+    "summary": "本文根据提供的概念解读整理。 Fleet Learning 指多个已部署机器人共同收集经验，并通过共享策略更新，让整个集群受益。"
+  },
+  {
+    "title": "HDMI：从人类视频学习人形机器人全身交互控制",
+    "filename": "HDMI.md",
+    "href": "notes/HDMI.html",
+    "markdown": "notes/HDMI.md",
+    "updated": "2026-10-19T06:23:07.166Z",
+    "summary": "> 论文：HDMI: Learning Interactive Humanoid Whole-Body Control from Human Videos   > 团队：CMU LeCAR Lab；Haoyang Weng、Yitang Li 等  "
+  },
+  {
+    "title": "Beyond Motion Tracking：可操控的物理交互能力",
+    "filename": "Steerable-Interaction-Competence.md",
+    "href": "notes/Steerable-Interaction-Competence.html",
+    "markdown": "notes/Steerable-Interaction-Competence.md",
+    "updated": "2026-10-19T06:09:12.973Z",
+    "summary": "> 原文：Beyond Motion Tracking: Steerable Physical Interaction Competence   > 作者：Haoyang Weng  "
+  },
+  {
+    "title": "Deterministic Policy Gradient（DPG）：确定性策略梯度",
+    "filename": "DPG.md",
+    "href": "notes/DPG.html",
+    "markdown": "notes/DPG.md",
+    "updated": "2026-10-19T03:21:06.705Z",
+    "summary": "DPG 是连续动作空间中的 Policy Gradient 方法。它不通过提高某个动作的采样概率来更新策略，而是让 Critic 计算：当前动作应该朝哪个方向变化，才能提高未来回报。 核心梯度链是："
+  },
+  {
+    "title": "SmoothRL：异步执行下的机器人在线强化学习",
+    "filename": "SmoothRL.md",
+    "href": "notes/SmoothRL.html",
+    "markdown": "notes/SmoothRL.md",
+    "updated": "2026-10-19T03:21:06.703Z",
+    "summary": "> 论文：SmoothRL: Online Reinforcement Learning During Asynchronous Execution   > 机构：Astribot（星尘智能）  "
+  },
+  {
+    "title": "FoveaVLA：让 VLA 学会主动决定下一步看哪里",
+    "filename": "FoveaVLA.md",
+    "href": "notes/FoveaVLA.html",
+    "markdown": "notes/FoveaVLA.md",
+    "updated": "2026-10-18T15:23:06.320Z",
+    "summary": "论文：FoveaVLA: Foveation Actions Replace the Wrist Camera in VLAs FoveaVLA 研究的是一个很实际的问题：机器人不一定需要一台绑在手腕上的相机，VLA 也可以在生成动作的同时，预测下一次应该从外部相机画面的哪个区域获取高清视觉信息。"
+  },
+  {
+    "title": "Waypoint-OPD：把 RL 训练过程中的策略变化蒸馏给 Student",
+    "filename": "Waypoint-OPD.md",
+    "href": "notes/Waypoint-OPD.html",
+    "markdown": "notes/Waypoint-OPD.md",
+    "updated": "2026-10-18T14:45:09.832Z",
+    "summary": "论文：Waypoint-OPD: Transferring RL-Induced Policy Shifts via Gated On-Policy Distillation 这篇工作的核心问题是：当一个 Teacher 通过强化学习获得了新的推理能力时，Student 应该模仿 Teacher 最终的策略，还是应该学习 Teacher 在 RL 过程中发生"
   },
   {
     "title": "Rethinking OPD I & II：重新理解 On-Policy Distillation",
     "filename": "Rethinking-OPD-I-II.md",
     "href": "notes/Rethinking-OPD-I-II.html",
+    "markdown": "notes/Rethinking-OPD-I-II.md",
+    "updated": "2026-10-18T14:41:58.891Z",
     "summary": "这两篇文章放在一起看，讨论的不是一个更复杂的蒸馏损失，而是 OPD（On-Policy Distillation）到底靠什么起作用。 Paper I 主要问：Teacher 给出的什么信号，Student 才能真正学进去？"
   },
   {
     "title": "RoboActualizer：从预训练世界模型的未来中选择并实现机器人动作",
     "filename": "RoboActualizer.md",
     "href": "notes/RoboActualizer.html",
+    "markdown": "notes/RoboActualizer.md",
+    "updated": "2026-10-18T11:51:54.562Z",
     "summary": "项目主页 RoboActualizer 提出了一个很清楚的问题：如果视频世界模型在预训练时已经学会了大量可能的未来，为什么每接一个新机器人任务都要重新训练整个世界模型？它的做法是冻结预训练世界模型，只学习如何从这些未来中选择与指令相关的一个，并生成实现它的机器人动作。"
   },
   {
-    "title": "RoboSkills：给 Coding Agent 一套机器人工具，再让它写出可执行的技能",
-    "filename": "RoboSkills.md",
-    "href": "notes/RoboSkills.html",
-    "summary": "让机器人把红色积木叠到蓝色积木上，至少要做几件事：找到两个物体，估计位置，选择抓取姿态，规划运动，放下之后检查有没有叠稳。RoboSkills 把这些环节组织成 Coding Agent 可以调用的工具和流程，让 Agent 用代码完成任务，也可以反复实验，写出以后能够独立运行的机器人程序。 项目由 OpenRoboKit 开源，仓库采用 MIT Licen"
+    "title": "PatternDex：用 Interaction Pattern 缩小灵巧手的 Embodiment Gap",
+    "filename": "PatternDex.md",
+    "href": "notes/PatternDex.html",
+    "markdown": "notes/PatternDex.md",
+    "updated": "2026-10-18T11:51:54.543Z",
+    "summary": "项目主页 PatternDex 讨论灵巧手模仿学习中的一个核心难题：人的手和机器人的手在手指数目、关节结构、尺寸和可达范围上都不同，直接把人类手指姿态 retarget 到机器人，常常得到不可执行的动作。论文提出，与其模仿人手的每个关节，不如先学习跨形态都更稳定的手—物交互模式。"
   },
   {
-    "title": "SGD 怎样通过重复使用数据，学到隐藏的低维结构？",
-    "filename": "SGD-Low-Dimensional-Polynomials.md",
-    "href": "notes/SGD-Low-Dimensional-Polynomials.html",
-    "summary": "一个输入有 1,000 维，但真正决定标签的，可能只是其中某个未知方向上的投影。神经网络要做的，是先找出这个方向，再学习投影值与标签之间的关系。 这篇论文最有意思的发现是：相同训练样本用第二次时，它对梯度的作用可能已经变了。 第一次更新将标签信息写进参数，第二次再看到同一样本，网络的非线性便可能产生更高阶的标签统计量，从中提取原本很弱的方向信息。"
-  },
-  {
-    "title": "SO-100 仿真训练参考：从 URDF 到 Isaac Lab",
-    "filename": "SO-100仿真训练.md",
-    "href": "notes/SO-100%E4%BB%BF%E7%9C%9F%E8%AE%AD%E7%BB%83.html",
-    "summary": "这个视频展示了一条比较完整的机器人仿真训练路径：从 SO-100 机械臂的硬件和 URDF 模型开始，转换为 Isaac Sim 可以使用的 OpenUSD 资产，再在 Isaac Lab 中配置环境、控制器和强化学习任务，最后将训练结果用于真实机器人。 它的重点不是某个特定算法，而是把机器人模型、仿真环境、控制接口和训练流程接起来。对于自制机械臂或数据较少"
-  },
-  {
-    "title": "SharpaDex：把双手接触过程变成可以学习的数据",
-    "filename": "SharpaDex.md",
-    "href": "notes/SharpaDex.html",
-    "summary": "拧瓶盖最难的部分，往往被手指挡住了。相机可以看到手已经碰到瓶盖，却不一定能判断捏持是否稳定、瓶盖有没有滑动，以及两只手是不是在相互较劲。 SharpaDex 的价值，是把这些过程中的视觉、指尖受力、触觉形变和动作同步记录下来。它让研究者能够直接研究接触如何影响动作，而不只是让模型从 RGB 中猜测接触。"
-  },
-  {
-    "title": "SmoothRL：异步执行下的机器人在线强化学习",
-    "filename": "SmoothRL.md",
-    "href": "notes/SmoothRL.html",
-    "summary": "> 论文：SmoothRL: Online Reinforcement Learning During Asynchronous Execution   > 机构：Astribot（星尘智能）  "
-  },
-  {
-    "title": "Spurious Rewards：随机奖励为什么也能提高部分模型的数学分数",
-    "filename": "Spurious-Rewards.md",
-    "href": "notes/Spurious-Rewards.html",
-    "summary": "> 论文：Spurious Rewards: Rethinking Training Signals in RLVR   > 作者：Rulin Shao、Shuyue Stella Li、Rui Xin、Scott Geng 等  "
-  },
-  {
-    "title": "Beyond Motion Tracking：可操控的物理交互能力",
-    "filename": "Steerable-Interaction-Competence.md",
-    "href": "notes/Steerable-Interaction-Competence.html",
-    "summary": "> 原文：Beyond Motion Tracking: Steerable Physical Interaction Competence   > 作者：Haoyang Weng  "
-  },
-  {
-    "title": "SuperMimic：通过可微世界模型训练人形机器人全身控制",
-    "filename": "SuperMimic.md",
-    "href": "notes/SuperMimic.html",
-    "summary": "走路、跳跃、翻滚和舞蹈的目标各不相同，但执行它们的是同一台机器人。SuperMimic 利用这部分共享知识：学习一个身体动力学模型，再通过模型中的动作—状态梯度，训练覆盖大量参考动作的控制策略。 论文：SuperMimic: Scaling Humanoid Whole-Body Control with One Differentiable World M"
-  },
-  {
-    "title": "SynD：主动制造错误地图，测试模型到底有多相信先验",
-    "filename": "SynD.md",
-    "href": "notes/SynD.html",
-    "summary": "如果一个地图构建模型在正确先验帮助下表现很好，我们还不知道它遇到旧地图、定位偏差或道路改建时会怎样。等真实世界自然积累这些错误，成本很高，也很难控制变量。 SynD（Synthetic Deviation）提供了一种办法：从原有地图出发，生成类型和强度可控的偏差，再观察依赖先验的模型如何退化。 它的主要贡献是错误先验构造与鲁棒性评测，不是另一个地图预测网络。"
-  },
-  {
-    "title": "T-Rex：让触觉及时参与动作修正",
-    "filename": "T-Rex.md",
-    "href": "notes/T-Rex.html",
-    "summary": "机器人已经把卡片移到插槽附近，视觉上似乎对齐了，但继续推进时阻力突然增大。此时最需要的往往不是重新理解整幅图像，而是根据刚刚发生的接触，及时改变姿态和施力方式。 T-Rex 讨论的就是这种能力：视觉提供操作方向，触觉在接触过程中修正动作。 它既研究如何编码触觉的时间变化，也研究如何让这些变化更快地影响正在生成的动作。"
-  },
-  {
-    "title": "Tactile：从接触力学到数据驱动操作",
-    "filename": "Tactile.md",
-    "href": "notes/Tactile.html",
-    "summary": "机器人把手指移到瓶盖两侧，视觉上已经“抓住”了，但它可能只碰到了边缘，也可能正在打滑，还可能把瓶子捏变形。触觉要解决的，就是这些发生在接触之后、外部相机又很难看清的问题。 这篇笔记根据所给《两万字入门 Tactile：接触力学到数据驱动操作》整理，补充基础公式和研究思考。对应英文综述为 Tactile-Based Robotic Manipulation: "
-  },
-  {
-    "title": "The Flexibility Trap 论文解读：生成顺序怎样改变推理探索",
-    "filename": "The-Flexibility-Trap.md",
-    "href": "notes/The-Flexibility-Trap.html",
-    "summary": "JustGRPO 是这篇论文提出的方法和开源实现名称，与论文属于同一项工作。来源：项目主页 传统 Autoregressive（AR）模型按从左到右的顺序生成："
-  },
-  {
-    "title": "Transolver：把大量网格点变成少量物理状态，再做 Attention",
-    "filename": "Transolver.md",
-    "href": "notes/Transolver.html",
-    "summary": "Transolver 研究的是一个很具体的问题：物理仿真有大量空间采样点，但模型是否必须让每两个点都直接计算一次 Attention？ 它提出先把点的特征聚合成少量可学习的 physics-aware tokens，在这些 token 之间交换信息，再把结果还原到每个点。这样既保留逐点预测接口，又降低全局交互的计算成本。"
-  },
-  {
-    "title": "UNITAS：在三维空间中统一动作与世界变化",
-    "filename": "UNITAS.md",
-    "href": "notes/UNITAS.html",
-    "summary": "论文：A 3D-Native World Action Model for Embodied Manipulation。 本笔记依据提供的论文解读整理，实验数字沿用该材料，未独立复核原文。"
+    "title": "Long-WAM：用长时历史和自回归视频预训练扩展 World-Action Model",
+    "filename": "Long-WAM.md",
+    "href": "notes/Long-WAM.html",
+    "markdown": "notes/Long-WAM.md",
+    "updated": "2026-10-18T11:51:54.523Z",
+    "summary": "项目主页 Long-WAM 关注一个经常被低估的问题：机器人动作不应该只依赖当前一帧图像。开门、堆叠、整理和动态交互都需要知道物体刚才如何运动、任务已经进行到哪一步，以及之前的动作是否生效。Long-WAM 通过更长的视觉历史和自回归视频预训练，让 World-Action Model 获得更强的时序状态估计能力。"
   },
   {
     "title": "UnityVideo：用多模态监督增强视频模型的世界感知",
     "filename": "UnityVideo.md",
     "href": "notes/UnityVideo.html",
+    "markdown": "notes/UnityVideo.md",
+    "updated": "2026-10-18T11:51:54.504Z",
     "summary": "论文页面 UnityVideo 研究的不是一个直接输出机器人动作的策略，而是视频基础模型如何通过深度、光流、分割和人体结构等辅助模态获得更好的世界表示。它的基本判断是：只用 RGB 像素训练，模型可能学会画面外观，却不一定真正掌握物体运动、空间结构和人的姿态变化。"
   },
   {
-    "title": "VaM：把 Value Function 变成机器人执行时的进度记忆",
-    "filename": "VaM.md",
-    "href": "notes/VaM.html",
-    "summary": "机器人在桌上抓一块布，图像看起来差不多，实际却可能处于两种状态：刚刚抓稳，应该继续折叠；或者已经滑脱，需要张开夹爪重新抓取。只看当前画面，甚至看一小段视觉历史，策略也可能分不清。 VaM 的办法是：把最近几次 Value 预测保存下来，让动作策略一起读取。 策略不仅看到物体现在在哪里，还得到一个与任务目标有关的历史信号：此前是否在推进、是否停滞、是否出现退步"
+    "title": "QF3：用 Filtered Q-Gradients 稳定训练 Flow Policy",
+    "filename": "QF3.md",
+    "href": "notes/QF3.html",
+    "markdown": "notes/QF3.md",
+    "updated": "2026-10-18T11:51:54.485Z",
+    "summary": "项目主页 QF3 针对的是一个很实际的问题：已经有预训练的 Flow Policy，想用离线或 off-policy 强化学习把它调得更好，应该如何利用 Critic 的 Q 值而不把策略推到数据分布之外？论文的答案是过滤 Q 梯度，只允许它在 Replay Buffer 动作附近有限地改变 Flow Matching 的速度场。"
   },
   {
-    "title": "How Far Is Video Generation from World Model 论文解读：用物理外推检验世界模型",
-    "filename": "Video-Generation-as-World-Model.md",
-    "href": "notes/Video-Generation-as-World-Model.html",
-    "summary": "视频模型可能在熟悉场景中生成合理运动，但学习到物理规律意味着：即使速度、初始状态或因素组合发生变化，也能继续预测满足规律的未来。 论文因此评价三种泛化情形："
+    "title": "Generate, Track, Improve：用强化学习改进全身运动生成器",
+    "filename": "Generate-Track-Improve.md",
+    "href": "notes/Generate-Track-Improve.html",
+    "markdown": "notes/Generate-Track-Improve.md",
+    "updated": "2026-10-18T11:51:54.463Z",
+    "summary": "项目主页 这篇工作的出发点很直接：人形机器人的运动生成器可以生成看起来合理的全身轨迹，但这些轨迹未必适合真实地形和当前动力学状态。传统做法往往只训练一个 tracker，让它尽量跟随生成的参考动作。Generate, Track, Improve（GTI）进一步把强化学习反馈传回运动生成器，让生成器自己学会提出更容易执行、也更适合环境的动作。"
   },
   {
-    "title": "WAM 训练参考：VPP2",
-    "filename": "WAM训练参考VPP2.md",
-    "href": "notes/WAM%E8%AE%AD%E7%BB%83%E5%8F%82%E8%80%83VPP2.html",
-    "summary": "WAM（World Action Model，世界动作模型）的核心思路，是将视频预测所学到的运动和交互知识迁移到机器人动作。VPP2 的训练重点可以概括为：先让视频模型理解操作、正确跟随指令，再把视频能力转化为可执行的动作。 对于依赖视频预测引导动作的路线，首先要解决的是：给定当前观测和语言指令，模型能否预测出正确的操作过程。"
+    "title": "Skill2Real：通过 Agentic Skill Learning 实现 Zero-Shot Sim-to-Real",
+    "filename": "17-Skill2Real.md",
+    "href": "notes/17-Skill2Real.html",
+    "markdown": "notes/17-Skill2Real.md",
+    "updated": "2026-10-18T11:51:38.691Z",
+    "summary": "Skill2Real 研究如何让 Agent 在仿真中学习可执行技能，并把技能知识直接迁移到真实机器人，不再依赖真机任务微调或更新技能记忆。 它的重点不在于发明一个新的低层 Policy，而在于组织技能学习、失败诊断、验证、持久化记忆和跨域执行。系统希望保存的是可以被再次调用的技能程序，而不是只能在某个仿真状态下复现的关节轨迹。"
   },
   {
-    "title": "WM-Craftnet：用世界模型记住接触如何随动作变化",
-    "filename": "WM-Craftnet.md",
-    "href": "notes/WM-Craftnet.html",
-    "summary": "机器人手内旋转物体时，一帧图像很难告诉它物体是不是正在滑落。同样的手指姿态，可能对应稳定夹持，也可能只是掉落前的一瞬间。WM-Craftnet 的思路，是把视觉、触觉、本体感知和动作历史压成持续更新的交互状态，让策略利用这份状态来控制。 这篇笔记以提供的 SharpaDex 解读为线索，并对照论文核实方法定位；项目页提供演示。后文与 SharpaDex 的连"
+    "title": "USDCraft：用程序化建模生成可仿真的 Articulated 3D Assets",
+    "filename": "16-USDCraft.md",
+    "href": "notes/16-USDCraft.html",
+    "markdown": "notes/16-USDCraft.md",
+    "updated": "2026-10-18T11:51:38.689Z",
+    "summary": "USDCraft 解决的是 Real2Sim 中一个很实际的问题：真实物体的扫描 Mesh 往往不完整，也没有零件划分、关节类型和物理参数。仅靠 Mesh Segmentation 很难把它恢复成可以在 Isaac Sim 中运动的 articulated asset。 USDCraft 不让 LLM 一次性输出最终 Mesh，而是让它生成一个可执行的 As"
   },
   {
-    "title": "Waypoint-OPD：把 RL 训练过程中的策略变化蒸馏给 Student",
-    "filename": "Waypoint-OPD.md",
-    "href": "notes/Waypoint-OPD.html",
-    "summary": "论文：Waypoint-OPD: Transferring RL-Induced Policy Shifts via Gated On-Policy Distillation 这篇工作的核心问题是：当一个 Teacher 通过强化学习获得了新的推理能力时，Student 应该模仿 Teacher 最终的策略，还是应该学习 Teacher 在 RL 过程中发生"
+    "title": "PredActor：直接生成可执行动作的人形机器人预测策略",
+    "filename": "15-PredActor.md",
+    "href": "notes/15-PredActor.html",
+    "markdown": "notes/15-PredActor.md",
+    "updated": "2026-10-18T11:51:38.686Z",
+    "summary": "PredActor（Predictive Action Diffusion for Steerable Onboard Humanoid Control）研究如何让 Diffusion Model 直接成为人形机器人的底层控制器，同时支持测试时目标引导。 传统人形运动生成通常把参考轨迹交给一个 Tracker 执行，或者直接让 Diffusion Polic"
   },
   {
-    "title": "λ₀：用第一人称全身数据训练通用人形机器人",
-    "filename": "λ0-人类全身数据与人形机器人.md",
-    "href": "notes/%CE%BB0-%E4%BA%BA%E7%B1%BB%E5%85%A8%E8%BA%AB%E6%95%B0%E6%8D%AE%E4%B8%8E%E4%BA%BA%E5%BD%A2%E6%9C%BA%E5%99%A8%E4%BA%BA.html",
-    "summary": "论文： Towards a General Humanoid Loco-Manipulation Model via Egocentric Whole-Body Human Data Pretraining 这篇工作的出发点很直接：人类行为视频很多，机器人全身示教数据却很少。能不能先从人类的第一人称全身数据中学到“怎么观察、怎么移动、怎么用双手操作”，再用少"
+    "title": "UniWAM：统一物理推理、世界生成和动作预测",
+    "filename": "14-UniWAM.md",
+    "href": "notes/14-UniWAM.html",
+    "markdown": "notes/14-UniWAM.md",
+    "updated": "2026-10-18T11:51:38.684Z",
+    "summary": "UniWAM（Unified World-Action Model）试图把 VLA 和 WAM 的优点放在同一个模型中。VLA 擅长语言理解和任务语义，但动作监督不一定能学好物理未来；WAM 擅长利用视频时序先验，却可能缺少复杂语义推理和开放场景理解。 UniWAM 的基本分工是三个协同 Expert：Physical Reasoner、World Gene"
+  },
+  {
+    "title": "EgoLAP：用 Language-Action Reasoning 跨越人类与机器人的动作差异",
+    "filename": "13-EgoLAP.md",
+    "href": "notes/13-EgoLAP.html",
+    "markdown": "notes/13-EgoLAP.md",
+    "updated": "2026-10-18T11:51:38.681Z",
+    "summary": "EgoLAP（Learning from Egocentric Human Data through Language-Action Reasoning）关注一个常见问题：人类第一视角数据很多，但人手和机器人手臂在关节数量、尺寸、控制接口上差别很大，直接把人的动作映射到机器人动作往往不稳定。 它的思路是，不强行复制低层关节轨迹，而是让人类和机器人共享一种结构"
+  },
+  {
+    "title": "Video Prediction Policy 2：先把视频预测学好，再训练动作策略",
+    "filename": "12-Video Prediction Policy 2.md",
+    "href": "notes/12-Video%20Prediction%20Policy%202.html",
+    "markdown": "notes/12-Video%20Prediction%20Policy%202.md",
+    "updated": "2026-10-18T11:51:38.679Z",
+    "summary": "Video Prediction Policy 2（VPP2）的核心观点是：World-Action Model 的瓶颈不一定只在动作预测，很多时候是视频模型根本没有正确理解“要操作哪个对象、动作如何发生、最后应该到达什么状态”。如果未来视频预测错了，动作模块即使执行得很准确，也会忠实地完成错误的操作。 普通视频生成可以产生视觉上连续、自然的画面，但这不等于"
   },
   {
     "title": "仿真引擎对比：PhysX、Newton、MuJoCo、Genesis 的差异",
     "filename": "仿真引擎对比-PhysX-MuJoCo-Genesis.md",
     "href": "notes/%E4%BB%BF%E7%9C%9F%E5%BC%95%E6%93%8E%E5%AF%B9%E6%AF%94-PhysX-MuJoCo-Genesis.html",
+    "markdown": "notes/%E4%BB%BF%E7%9C%9F%E5%BC%95%E6%93%8E%E5%AF%B9%E6%AF%94-PhysX-MuJoCo-Genesis.md",
+    "updated": "2026-10-18T11:50:16.687Z",
     "summary": "参考： Comparing Physics Engines 这篇不是提出新策略的论文，而是一次很有实践价值的仿真对照。作者尽量统一机器人模型、质量与惯量、控制器、碰撞几何和初始状态，对比 PhysX（Isaac Sim）、Newton / MuJoCo-Warp、MuJoCo CPU 和 Genesis。"
   },
   {
-    "title": "打假：别把 Benchmark 涨分直接写成推理能力进步",
-    "filename": "打假.md",
-    "href": "notes/%E6%89%93%E5%81%87.html",
-    "summary": "> 主题：LLM 推理与强化学习研究中的评测、机制解释和能力主张核查   > 材料范围：A Sober Look、Spurious Rewards，以及 Incorrect Baseline Evaluations 评论与作者讨论  "
+    "title": "DITTO-X：让人类可以无缝接管机器人的灵巧手",
+    "filename": "DITTO-X-双向遥操作.md",
+    "href": "notes/DITTO-X-%E5%8F%8C%E5%90%91%E9%81%A5%E6%93%8D%E4%BD%9C.html",
+    "markdown": "notes/DITTO-X-%E5%8F%8C%E5%90%91%E9%81%A5%E6%93%8D%E4%BD%9C.md",
+    "updated": "2026-10-18T11:50:16.686Z",
+    "summary": "项目与论文： DITTO-X: Forward and Reverse Teleoperation for Dexterous Manipulation and Human Intervention DITTO-X 关注的是一个常见却容易被忽略的问题：机器人已经自主抓住物体后，如果动作出现问题，人类怎样接管，而不会因为手的姿态突然跳变把物体掉下来？"
+  },
+  {
+    "title": "I-BFM：用奖励调用人形机器人的交互技能",
+    "filename": "I-BFM-人形交互策略.md",
+    "href": "notes/I-BFM-%E4%BA%BA%E5%BD%A2%E4%BA%A4%E4%BA%92%E7%AD%96%E7%95%A5.html",
+    "markdown": "notes/I-BFM-%E4%BA%BA%E5%BD%A2%E4%BA%A4%E4%BA%92%E7%AD%96%E7%95%A5.md",
+    "updated": "2026-10-18T11:50:16.686Z",
+    "summary": "论文： I-BFM: Reward-Conditioned Robust Humanoid Interaction via Unsupervised Reinforcement Learning I-BFM 研究一个很有吸引力的方向：能不能先训练一个人形机器人策略族，之后只给它新的奖励函数，就让它学会搬运、推动、踢击和恢复，而不必每个任务都重新做完整的策略梯"
+  },
+  {
+    "title": "InterEvolve：在推理时进化奖励程序",
+    "filename": "InterEvolve-奖励程序进化.md",
+    "href": "notes/InterEvolve-%E5%A5%96%E5%8A%B1%E7%A8%8B%E5%BA%8F%E8%BF%9B%E5%8C%96.html",
+    "markdown": "notes/InterEvolve-%E5%A5%96%E5%8A%B1%E7%A8%8B%E5%BA%8F%E8%BF%9B%E5%8C%96.md",
+    "updated": "2026-10-18T11:50:16.686Z",
+    "summary": "论文与项目： InterEvolve: Test-Time Evolution of Reward Programs for Humanoid Loco-Manipulation InterEvolve 的想法是：如果已经有一个会走、会接触物体的人形机器人控制器，面对新任务时，是否不必重新训练整套策略，而是让 Agent 在测试时搜索一段更好的奖励程序？"
+  },
+  {
+    "title": "λ₀：用第一人称全身数据训练通用人形机器人",
+    "filename": "λ0-人类全身数据与人形机器人.md",
+    "href": "notes/%CE%BB0-%E4%BA%BA%E7%B1%BB%E5%85%A8%E8%BA%AB%E6%95%B0%E6%8D%AE%E4%B8%8E%E4%BA%BA%E5%BD%A2%E6%9C%BA%E5%99%A8%E4%BA%BA.html",
+    "markdown": "notes/%CE%BB0-%E4%BA%BA%E7%B1%BB%E5%85%A8%E8%BA%AB%E6%95%B0%E6%8D%AE%E4%B8%8E%E4%BA%BA%E5%BD%A2%E6%9C%BA%E5%99%A8%E4%BA%BA.md",
+    "updated": "2026-10-18T11:50:16.686Z",
+    "summary": "论文： Towards a General Humanoid Loco-Manipulation Model via Egocentric Whole-Body Human Data Pretraining 这篇工作的出发点很直接：人类行为视频很多，机器人全身示教数据却很少。能不能先从人类的第一人称全身数据中学到“怎么观察、怎么移动、怎么用双手操作”，再用少"
+  },
+  {
+    "title": "Conclusion / Discussion：机器人学习正在从“生成动作”走向“持续改进”",
+    "filename": "18-Conclusion-Discussion.md",
+    "href": "notes/18-Conclusion-Discussion.html",
+    "markdown": "notes/18-Conclusion-Discussion.md",
+    "updated": "2026-10-18T11:47:45.332Z",
+    "summary": "这 17 篇工作虽然来自不同方向，但它们正在回答同一个问题：机器人能不能不依赖大量人工设计和逐任务训练，而是利用数据、仿真、世界模型、程序搜索和真实反馈，持续获得新的能力？ 从整体上看，当前的进展并不是由某一个模型单独带来的，而是多个层次同时发生变化：基础模型开始理解更长的行为过程，生成式策略可以接受强化学习后训练，LLM 可以搜索奖励程序和技能程序，仿真资"
+  },
+  {
+    "title": "Physical AI 参考：从机器人理论到真实部署",
+    "filename": "Physical AI参考-Russ Tedrake.md",
+    "href": "notes/Physical%20AI%E5%8F%82%E8%80%83-Russ%20Tedrake.html",
+    "markdown": "notes/Physical%20AI%E5%8F%82%E8%80%83-Russ%20Tedrake.md",
+    "updated": "2026-10-17T07:22:01.470Z",
+    "summary": "Russ Tedrake 在这期访谈里谈到的核心问题，不是某个模型能不能在演示中完成动作，而是机器人技术是否终于具备了进入真实世界的完整条件：更好的学习算法、更成熟的硬件、更低的制造成本、更大的投资和更多可以部署的机器人。 这次机器人热潮与过去的不同之处，可能不在于某一项技术突然解决了所有问题，而在于多个环节开始同时变得可用。真正的下一步，是把实验室里的能力"
+  },
+  {
+    "title": "SO-100 仿真训练参考：从 URDF 到 Isaac Lab",
+    "filename": "SO-100仿真训练.md",
+    "href": "notes/SO-100%E4%BB%BF%E7%9C%9F%E8%AE%AD%E7%BB%83.html",
+    "markdown": "notes/SO-100%E4%BB%BF%E7%9C%9F%E8%AE%AD%E7%BB%83.md",
+    "updated": "2026-10-17T07:20:38.351Z",
+    "summary": "这个视频展示了一条比较完整的机器人仿真训练路径：从 SO-100 机械臂的硬件和 URDF 模型开始，转换为 Isaac Sim 可以使用的 OpenUSD 资产，再在 Isaac Lab 中配置环境、控制器和强化学习任务，最后将训练结果用于真实机器人。 它的重点不是某个特定算法，而是把机器人模型、仿真环境、控制接口和训练流程接起来。对于自制机械臂或数据较少"
+  },
+  {
+    "title": "ENPIRE：让机器人自己做策略改进",
+    "filename": "ENPIRE.md",
+    "href": "notes/ENPIRE.html",
+    "markdown": "notes/ENPIRE.md",
+    "updated": "2026-10-17T07:18:25.328Z",
+    "summary": "ENPIRE（Agentic Robot Policy Self-Improvement in the Real World）的核心思路，是把真实机器人实验组织成一个可以反复运行的闭环：重置环境，执行策略，判断结果，根据失败继续改进。 它关注的不是让 Agent 一次性写出完美控制器，而是把机器人研究中原本由人完成的试验、观察、调参和改代码，逐步交给 Age"
+  },
+  {
+    "title": "WAM 训练参考：VPP2",
+    "filename": "WAM训练参考VPP2.md",
+    "href": "notes/WAM%E8%AE%AD%E7%BB%83%E5%8F%82%E8%80%83VPP2.html",
+    "markdown": "notes/WAM%E8%AE%AD%E7%BB%83%E5%8F%82%E8%80%83VPP2.md",
+    "updated": "2026-10-13T03:03:18.701Z",
+    "summary": "WAM（World Action Model，世界动作模型）的核心思路，是将视频预测所学到的运动和交互知识迁移到机器人动作。VPP2 的训练重点可以概括为：先让视频模型理解操作、正确跟随指令，再把视频能力转化为可执行的动作。 对于依赖视频预测引导动作的路线，首先要解决的是：给定当前观测和语言指令，模型能否预测出正确的操作过程。"
+  },
+  {
+    "title": "Intersting Idea",
+    "filename": "Intersting Idea.md",
+    "href": "notes/Intersting%20Idea.html",
+    "markdown": "notes/Intersting%20Idea.md",
+    "updated": "2026-07-02T07:42:44.233Z",
+    "summary": "这里记录很傻逼的想法 能不能用c++或者python做一个“人脸识别”但是不是真的识别，只是把轮廓画出来，但是用ASCII马画的"
   }
 ]

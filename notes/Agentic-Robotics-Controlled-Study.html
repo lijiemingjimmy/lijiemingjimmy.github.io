@@ -1,0 +1,651 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Agentic Robotics 受控研究：模型怎样从执行失败中改进机器人策略 · Jieming Li</title><link rel="stylesheet" href="../assets/styles.css"><link rel="stylesheet" href="../assets/notes.css"><link rel="stylesheet" href="vendor/katex/katex.min.css"></head><body class="note-page"><header class="note-nav"><a href="../index.html#blog">← Blog</a><a href="../index.html">Jieming Li</a></header><main class="note-layout"><aside class="note-outline"><p class="eyebrow">On this page</p><nav aria-label="目录"><ol><li><a href="#section-0">1. 这里的 self-learning 到底学习了什么？</a></li><li><a href="#section-3">2. 实验范围和计分方式</a></li><li><a href="#section-8">3. 一轮策略改进是怎样执行的？</a></li><li><a href="#section-9">4. Finding 1：初始策略能力与修复能力要分别测</a></li><li><a href="#section-11">5. Finding 2：技能库提供基础，真正的难点是如何适配</a></li><li><a href="#section-12">6. Finding 3：反馈要对应可修改的决策</a></li><li><a href="#section-15">7. Finding 4：坐标齐全，不代表能推导出操作关系</a></li><li><a href="#section-18">8. Finding 5：指出碰撞以后，还需要构造可执行计划</a></li><li><a href="#section-19">9. Finding 6：先用精确状态学习，为什么有时更差？</a></li><li><a href="#section-23">10. 怎样判断这些结论的证据强度？</a></li><li><a href="#section-24">11. 计算成本的数字应怎样读？</a></li><li><a href="#section-25">12. 开源代码怎样与论文对应？</a></li><li><a href="#section-26">13. 对 RUA 与 Self-Evolving Skills 可以怎样进一步研究？</a></li></ol></nav></aside><article class="note-content" id="content"><p class="eyebrow">Research notebook · 研究笔记</p><h1 id="noteTitle">Agentic Robotics 受控研究：模型怎样从执行失败中改进机器人策略</h1>
+<p>论文：<strong>A Controlled Study of Models, Skills, Feedback, and Curriculum in Agentic Robotics</strong>。Kaiyuan Chen 等，UC Berkeley、Bosch、NVIDIA，arXiv:2611.09030v1，2026-11-06。</p>
+<p><a href="https://arxiv.org/abs/2611.09030">论文</a> · <a href="https://arxiv.org/html/2611.09030v1">全文与附录</a> · <a href="https://graph-robots.github.io/agentic-self-learning/">项目主页</a> · <a href="https://github.com/graph-robots/agentic-self-learning">代码</a> · <a href="https://huggingface.co/datasets/keplerccc/agentic-robotics-coding-traces">Agent 执行记录</a></p>
+<p>这篇论文研究一个具体问题：<strong>Coding Agent 写出机器人策略之后，能否根据真实的执行结果，改出一个在新布局上更可靠的版本？</strong> 作者把这个过程拆成模型、技能、反馈和课程四个因素，逐项观察它们怎样影响策略改进。</p>
+<p>最值得记住的是三个能力层次：记录失败、解释失败、修复策略。一次操作失败可能已经被日志完整记录，Agent 也能用语言说明“碰撞了”，但下一次修改仍可能只是把高度增加几厘米。这种修改有时能救回当前布局，却未必形成可迁移的碰撞处理方法。</p>
+<p>研究提供了较强证据，说明在这套仿真任务和工具条件下，瓶颈经常出现在<strong>把物理证据转成有效的程序修改</strong>这一环节。它的结果主要覆盖同一任务类别内的布局泛化。</p>
+<h2 id="section-0">1. 这里的 self-learning 到底学习了什么？</h2>
+<h3 id="section-1">1.1 被更新的是策略程序</h3>
+<p>常见的策略学习会更新神经网络参数。这里的外层循环更新的是可执行程序：策略图的节点、分支、调用顺序，以及技能的 Python 实现。</p>
+<p>设任务说明为 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi mathvariant="script">T</mi></mrow><annotation encoding="application/x-tex">\mathcal T</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord mathcal" style="margin-right:0.2542em;">T</span></span></span></span></eq>，可用技能集合为 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi mathvariant="script">S</mi></mrow><annotation encoding="application/x-tex">\mathcal S</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord mathcal" style="margin-right:0.075em;">S</span></span></span></span></eq>，Coding Agent 为 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>A</mi></mrow><annotation encoding="application/x-tex">A</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord mathnormal">A</span></span></span></span></eq>，则初始策略可以写成：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi>π</mi><mn>0</mn></msub><mo>=</mo><mi>A</mi><mo stretchy="false">(</mo><mi mathvariant="script">T</mi><mo separator="true">,</mo><mi mathvariant="script">S</mi><mo stretchy="false">)</mo><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+\pi_0=A(\mathcal T,\mathcal S).
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.5806em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0359em;">π</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:-0.0359em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">0</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal">A</span><span class="mopen">(</span><span class="mord mathcal" style="margin-right:0.2542em;">T</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathcal" style="margin-right:0.075em;">S</span><span class="mclose">)</span><span class="mord">.</span></span></span></span></span></eqn></section><p>第 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>k</mi></mrow><annotation encoding="application/x-tex">k</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6944em;"></span><span class="mord mathnormal" style="margin-right:0.0315em;">k</span></span></span></span></eq> 轮先执行策略，得到轨迹，再生成反馈：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi>τ</mi><mi>k</mi></msub><mo>=</mo><mi mathvariant="normal">Rollout</mi><mo>⁡</mo><mo stretchy="false">(</mo><msub><mi>π</mi><mi>k</mi></msub><mo separator="true">,</mo><mi mathvariant="script">E</mi><mo stretchy="false">)</mo><mo separator="true">,</mo><mspace width="2em"/><msub><mi>f</mi><mi>k</mi></msub><mo>=</mo><mi>F</mi><mo stretchy="false">(</mo><msub><mi>τ</mi><mi>k</mi></msub><mo stretchy="false">)</mo><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+\tau_k=\operatorname{Rollout}(\pi_k,\mathcal E),\qquad
+f_k=F(\tau_k).
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.5806em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1132em;">τ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:-0.1132em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0315em;">k</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mop"><span class="mord mathrm">Rollout</span></span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0359em;">π</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:-0.0359em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0315em;">k</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathcal" style="margin-right:0.0894em;">E</span><span class="mclose">)</span><span class="mpunct">,</span><span class="mspace" style="margin-right:2em;"></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1076em;">f</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:-0.1076em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0315em;">k</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal" style="margin-right:0.1389em;">F</span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1132em;">τ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:-0.1132em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0315em;">k</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mclose">)</span><span class="mord">.</span></span></span></span></span></eqn></section><p>然后根据当前代码、执行反馈和修改历史生成下一版：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi>π</mi><mrow><mi>k</mi><mo>+</mo><mn>1</mn></mrow></msub><mo>=</mo><mi>A</mi><mo stretchy="false">(</mo><msub><mi>π</mi><mi>k</mi></msub><mo separator="true">,</mo><msub><mi>f</mi><mi>k</mi></msub><mo separator="true">,</mo><msub><mi mathvariant="script">H</mi><mi>k</mi></msub><mo stretchy="false">)</mo><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+\pi_{k+1}=A(\pi_k,f_k,\mathcal H_k).
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6389em;vertical-align:-0.2083em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0359em;">π</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:-0.0359em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right:0.0315em;">k</span><span class="mbin mtight">+</span><span class="mord mtight">1</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2083em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal">A</span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0359em;">π</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:-0.0359em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0315em;">k</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1076em;">f</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:-0.1076em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0315em;">k</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathcal" style="margin-right:0.0097em;">H</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:-0.0097em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0315em;">k</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mclose">)</span><span class="mord">.</span></span></span></span></span></eqn></section><p>这个过程可以理解为有执行反馈的程序搜索。论文没有在这些实验中训练底层大模型权重，也没有通过 PPO 或 GRPO 对 Coding Agent 做参数更新。</p>
+<h3 id="section-2">1.2 Coding Agent、策略图和仿真器分工不同</h3>
+<table>
+<thead>
+<tr>
+<th>组件</th>
+<th>负责什么</th>
+<th>产生什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Coding Agent</td>
+<td>阅读任务和反馈，编辑策略</td>
+<td>新的图结构与技能代码</td>
+</tr>
+<tr>
+<td>Graph-as-Policy</td>
+<td>根据当前观察调度感知、规划和控制</td>
+<td>一次机器人任务执行</td>
+</tr>
+<tr>
+<td>技能库</td>
+<td>提供定位、抓取、运动规划等能力</td>
+<td>可调用函数及部分可读实现</td>
+</tr>
+<tr>
+<td>仿真器与评估器</td>
+<td>执行动作，记录状态并判定结果</td>
+<td>轨迹、接触、成功指标</td>
+</tr>
+<tr>
+<td>实验 harness</td>
+<td>管理检查、数据划分、回退和策略选择</td>
+<td>可比较的迭代结果</td>
+</tr>
+</tbody>
+</table>
+<figure class="diagram"><pre class="mermaid">flowchart TD
+    T[任务说明与技能库] --&gt; A[Coding Agent 生成策略]
+    A --&gt; P[策略图与技能代码]
+    P --&gt; C[静态检查与训练实例预执行]
+    C --&gt; R[训练布局上的机器人执行]
+    R --&gt; F[结构化执行反馈]
+    F --&gt; E[Coding Agent 修改策略]
+    E --&gt; P
+    R --&gt; V[验证集用于停止与选版本]
+    V --&gt; H[Held-out 布局评估]
+</pre><details><summary>Diagram source</summary><pre>flowchart TD
+    T[任务说明与技能库] --&gt; A[Coding Agent 生成策略]
+    A --&gt; P[策略图与技能代码]
+    P --&gt; C[静态检查与训练实例预执行]
+    C --&gt; R[训练布局上的机器人执行]
+    R --&gt; F[结构化执行反馈]
+    F --&gt; E[Coding Agent 修改策略]
+    E --&gt; P
+    R --&gt; V[验证集用于停止与选版本]
+    V --&gt; H[Held-out 布局评估]
+</pre></details></figure><p>图展示论文主实验的角色分工；实际执行中还有修改退化后的回退。Held-out 数据用于衡量性能，不作为 Agent 的修复提示。</p>
+<p>策略图本身可以闭环执行，例如重新拍图、检测物体是否移动、失败后重抓。外层 Coding Agent 修改策略是另一层循环。两者要区分，否则容易把“程序里的 retry”与“跨执行轮次的策略改进”混为一谈。</p>
+<p>相关基础见 <a href="GaP.html">GaP 笔记</a>。</p>
+<h2 id="section-3">2. 实验范围和计分方式</h2>
+<h3 id="section-4">2.1 九项任务分属两个实验套件</h3>
+<table>
+<thead>
+<tr>
+<th>套件</th>
+<th>任务</th>
+<th>主要考察点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>VABAR</td>
+<td>Tool Hanging</td>
+<td>抓取和接近方式是否允许扳手圆环挂入挂钩</td>
+</tr>
+<tr>
+<td>VABAR</td>
+<td>Syringe Packing</td>
+<td>长物体运输、姿态调整和狭窄开口插入</td>
+</tr>
+<tr>
+<td>VABAR</td>
+<td>Gear Meshing</td>
+<td>齿轮定位、啮合以及后续驱动验证</td>
+</tr>
+<tr>
+<td>VABAR</td>
+<td>USB-C Insertion</td>
+<td>严格的位姿与接触约束</td>
+</tr>
+<tr>
+<td>VABAR</td>
+<td>Cable Routing</td>
+<td>双臂协作、柔性物体形状与接触变化</td>
+</tr>
+<tr>
+<td>MimicGen</td>
+<td>Kitchen、Coffee、Threading、Mug Cleanup</td>
+<td>课程实验中的多阶段操作与视觉迁移</td>
+</tr>
+</tbody>
+</table>
+<p>模型、反馈等主实验集中在五项 VABAR 任务；课程实验使用四项 MimicGen 和三项 VABAR。九项任务并没有全部参加每一种消融。</p>
+<p>机器人和传感器配置固定，物体与场景变化范围有界。Held-out 测试主要检查程序在同类任务的新布局上是否有效。论文未研究跨机器人迁移或真实机器人上的 self-learning。</p>
+<h3 id="section-5">2.2 训练、验证、测试各有用途</h3>
+<p>论文主循环通常使用：</p>
+<ul>
+<li><strong>4 个训练布局</strong>：产生 Agent 能读取的执行反馈。</li>
+<li><strong>5 个验证布局</strong>：用于停止和选择策略版本。</li>
+<li><strong>10 个 held-out 布局</strong>：用于报告性能。</li>
+</ul>
+<p>模型比较通常观察初始生成及两轮反馈修改；反馈与技能库实验最多包含六个迭代点，即初始策略加五次修改。</p>
+<p>这里有两个需要保留的协议细节。首先，Table 1 是迭代曲线，其他一些实验报告的是验证集选出的版本。其次，附录 C.2 说明，Opus 5 xhigh 的两个早期实验在 Tool Hanging 和 Gear Meshing 上重复使用一个训练实例，且没有验证集。因此，“全部实验严格共享 4/5/10 划分”并不准确。<a href="https://arxiv.org/html/2611.09030v1#A3">实验调度说明</a></p>
+<h3 id="section-6">2.3 Per-object success 不等于整条任务成功</h3>
+<p>主要 VABAR 表格使用 <strong>held-out per-object success</strong>。例如一条任务要求放入两支注射器，成功放入一支可以获得部分物体得分，但整条任务仍未完成。Cable Routing 也有分阶段或子目标计分。</p>
+<p>因此，读到某个模型整体分数为 74%，应理解为该表规定的任务汇总指标，不能改写成“74% 的长任务全部成功”。对长时程操作研究，建议同时保留完整 episode success 和中间阶段完成度。</p>
+<h3 id="section-7">2.4 28K 是机器人 rollout 的数量级</h3>
+<p>附件里的“约 28,000 次仿真 rollout”和“约 2,500 个 Coding Agent session”需要分开。附录 Table 20 列出 27,620 次 policy episode 与 2,459 个 Agent session；后者包含初始生成、反馈修改和预执行修复。</p>
+<p>表内 631 runs 还包括 superseded passes 与 dropped arms。不能把它理解为 631 个完全独立、都进入最终结果表的超参数组合，更不能据此认为论文做了四个因素的全因子实验。</p>
+<h2 id="section-8">3. 一轮策略改进是怎样执行的？</h2>
+<p>可以把论文主实验的一轮理解成以下过程。</p>
+<ol>
+<li><strong>生成或修改代码。</strong> Agent 写出 workflow 和所需技能实现，遵守可调用工具与文件访问规则。</li>
+<li><strong>检查可执行性。</strong> 静态检查和训练实例上的预执行发现图格式、接口、代码运行等问题。需要时启动修复会话。</li>
+<li><strong>执行训练布局。</strong> 由仿真器运行策略，评估器判断物理结果。</li>
+<li><strong>生成反馈。</strong> 汇总状态变化、技能返回值、接触和失败等信息，按实验条件组织成报告。</li>
+<li><strong>处理退化与历史。</strong> harness 根据预定规则决定是否保留修改，提供历史摘要和代码差异。</li>
+<li><strong>验证与继续。</strong> 验证分数参与停止和选版本；未停止时，再启动一次 Agent 修改。</li>
+</ol>
+<p>这里存在三个不同的“成功”：程序能加载、技能函数返回完成、物理任务满足目标。它们必须由不同证据判断。例如 <code>place()</code> 返回正常，只说明函数跑完，不说明物体稳定留在容器里。</p>
+<p>论文主循环每次修改启动新 Agent session。它通过当前文件、反馈中的历史摘要以及精确 diff 获取过去信息。这是一种通过外部文件保存经验的设计。</p>
+<p><strong>最终结果必须以环境评估器为准。</strong> Agent 自己说“已经修好了”，或者新程序没有报错，都不能替代下一次物理执行。</p>
+<h2 id="section-9">4. Finding 1：初始策略能力与修复能力要分别测</h2>
+<p>下面整理附件提供、并与论文 Table 1 核对的结果。数值为五项 VABAR 任务汇总的 held-out per-object success；增益单位为百分点。</p>
+<table>
+<thead>
+<tr>
+<th>模型设置</th>
+<th style="text-align:right">初始 @0</th>
+<th style="text-align:right">两轮后 @2</th>
+<th style="text-align:right">累计增益</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Opus 5 high</td>
+<td style="text-align:right">41%</td>
+<td style="text-align:right">81%</td>
+<td style="text-align:right">+40</td>
+</tr>
+<tr>
+<td>Opus 5.5</td>
+<td style="text-align:right">67%</td>
+<td style="text-align:right">77%</td>
+<td style="text-align:right">+10</td>
+</tr>
+<tr>
+<td>Opus 5 xhigh</td>
+<td style="text-align:right">45%</td>
+<td style="text-align:right">74%</td>
+<td style="text-align:right">+29</td>
+</tr>
+<tr>
+<td>Opus 5 low</td>
+<td style="text-align:right">57%</td>
+<td style="text-align:right">74%</td>
+<td style="text-align:right">+17</td>
+</tr>
+<tr>
+<td>Fable 5.1</td>
+<td style="text-align:right">44%</td>
+<td style="text-align:right">64%</td>
+<td style="text-align:right">+20</td>
+</tr>
+<tr>
+<td>GPT-6 Sol</td>
+<td style="text-align:right">33%</td>
+<td style="text-align:right">53%</td>
+<td style="text-align:right">+20</td>
+</tr>
+<tr>
+<td>GPT-6 Astra</td>
+<td style="text-align:right">43%</td>
+<td style="text-align:right">48%</td>
+<td style="text-align:right">+5</td>
+</tr>
+<tr>
+<td>Sonnet 5</td>
+<td style="text-align:right">45%</td>
+<td style="text-align:right">46%</td>
+<td style="text-align:right">+1</td>
+</tr>
+<tr>
+<td>Kimi K3</td>
+<td style="text-align:right">39%</td>
+<td style="text-align:right">46%</td>
+<td style="text-align:right">+7</td>
+</tr>
+<tr>
+<td>DeepSeek V4</td>
+<td style="text-align:right">38%</td>
+<td style="text-align:right">44%</td>
+<td style="text-align:right">+6</td>
+</tr>
+</tbody>
+</table>
+<p>来源：<a href="https://arxiv.org/html/2611.09030v1#S5.T1">论文 Table 1</a>。这是论文实验时的具体模型与调用设置，不是当前所有机器人应用的通用模型排名。</p>
+<p>Opus 5 xhigh、Fable 5.1、GPT-6 Astra、Sonnet 5 的初始分数接近，都在 43%–45%。经过反馈后，它们却分别达到 74%、64%、48%、46%。因此，只看第一版代码能不能执行，会漏掉模型之间很重要的能力差异。</p>
+<p>可以把一个机器人 Coding Agent 的表现分成：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mtext>初始质量</mtext><mo separator="true">,</mo><mspace width="1em"/><mtext>反馈后的增益</mtext><mo separator="true">,</mo><mspace width="1em"/><mtext>达到该增益的成本</mtext><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+\text{初始质量},\quad
+\text{反馈后的增益},\quad
+\text{达到该增益的成本}.
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8778em;vertical-align:-0.1944em;"></span><span class="mord text"><span class="mord cjk_fallback">初始质量</span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:1em;"></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord text"><span class="mord cjk_fallback">反馈后的增益</span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:1em;"></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord text"><span class="mord cjk_fallback">达到该增益的成本</span></span><span class="mord">.</span></span></span></span></span></eqn></section><p>这三项可以独立变化。起点高的模型可能很适合一次性部署；起点相似的模型可能具有完全不同的修复能力；同样的成功率也可能对应不同的仿真和推理开销。</p>
+<h3 id="section-10">不能从这些行推出“思考越少越好”</h3>
+<p>附件引用的相关系数为：修复增益与 thinking tokens 的 Spearman 相关约 0.09，与代码修改量约 0.69。这些只是少量模型设置之间的相关关系。更大的修改量可能反映模型能够重构策略，也可能只是强模型的伴随特征，不能当作“多改几行就能提升”的因果证据。</p>
+<p>模型调用条件也不完全等价：CLI、上下文、默认采样和推理控制方式不同。尤其附录 G.3 明确提醒，Opus 5 的三个标签应视为同一模型的不同实验样本，不能视为干净的推理强度扫描。设置的单请求预算没有直接变成整次会话的可比思考量。</p>
+<h2 id="section-11">5. Finding 2：技能库提供基础，真正的难点是如何适配</h2>
+<p>论文把技能分成四类：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mi mathvariant="script">S</mi><mo>=</mo><msub><mi mathvariant="script">S</mi><mn>0</mn></msub><mo>∪</mo><msub><mi mathvariant="script">S</mi><mi>g</mi></msub><mo>∪</mo><msub><mi mathvariant="script">S</mi><mi>τ</mi></msub><mo>∪</mo><msub><mi mathvariant="script">S</mi><mi>A</mi></msub><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+\mathcal S=\mathcal S_0\cup\mathcal S_g\cup\mathcal S_\tau\cup\mathcal S_A.
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord mathcal" style="margin-right:0.075em;">S</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathcal" style="margin-right:0.075em;">S</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:-0.075em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">0</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">∪</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.9694em;vertical-align:-0.2861em;"></span><span class="mord"><span class="mord mathcal" style="margin-right:0.075em;">S</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:-0.075em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0359em;">g</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">∪</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathcal" style="margin-right:0.075em;">S</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:-0.075em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.1132em;">τ</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">∪</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathcal" style="margin-right:0.075em;">S</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3283em;"><span style="top:-2.55em;margin-left:-0.075em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">A</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mord">.</span></span></span></span></span></eqn></section><table>
+<thead>
+<tr>
+<th>集合</th>
+<th>含义</th>
+<th>例子</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi mathvariant="script">S</mi><mn>0</mn></msub></mrow><annotation encoding="application/x-tex">\mathcal S_0</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathcal" style="margin-right:0.075em;">S</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:-0.075em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">0</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span></eq></td>
+<td>基础机器人与传感器接口</td>
+<td>拍图、移动、夹爪控制</td>
+</tr>
+<tr>
+<td><eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi mathvariant="script">S</mi><mi>g</mi></msub></mrow><annotation encoding="application/x-tex">\mathcal S_g</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.9694em;vertical-align:-0.2861em;"></span><span class="mord"><span class="mord mathcal" style="margin-right:0.075em;">S</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:-0.075em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0359em;">g</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span></span></span></span></eq></td>
+<td>通用技能</td>
+<td>物体定位、通用抓取、运动规划</td>
+</tr>
+<tr>
+<td><eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi mathvariant="script">S</mi><mi>τ</mi></msub></mrow><annotation encoding="application/x-tex">\mathcal S_\tau</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathcal" style="margin-right:0.075em;">S</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:-0.075em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.1132em;">τ</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span></eq></td>
+<td>人提供的任务专属技能</td>
+<td>为挂扳手设计的抓取与对齐逻辑</td>
+</tr>
+<tr>
+<td><eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi mathvariant="script">S</mi><mi>A</mi></msub></mrow><annotation encoding="application/x-tex">\mathcal S_A</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathcal" style="margin-right:0.075em;">S</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3283em;"><span style="top:-2.55em;margin-left:-0.075em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">A</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span></eq></td>
+<td>Agent 自行生成的任务技能</td>
+<td>新的避障、重定位或接近逻辑</td>
+</tr>
+</tbody>
+</table>
+<p>例如，通用抓取技能可能成功拿起扳手，却把夹爪放在圆环附近。抓取本身成功，但后续挂钩无法穿过圆环。有效的修改需要从最终任务约束反推抓取位置，而不能只提高 <code>grasp()</code> 的成功率。</p>
+<p>作者按代码来源分析初始策略：Opus 5 xhigh、Opus 5.5、Fable 5.1 的新代码比例约为 24%、18%、12%，部分修复增益较小的模型约为 4%–7%。这个观察支持一种解释：已有技能对强模型是可改造的起点，对另一些模型则可能限制其搜索范围。</p>
+<p>但“新代码”在这里主要根据规范化后的代码行与库代码是否匹配来归因。它不是对算法创新程度的测量，参数调整和实现重写也可能影响统计。</p>
+<p>还要区分三种成果：修改当前任务的参数、为当前任务实现新技能、把技能验证后加入长期共享库。论文重点验证前两种。要证明第三种，需要让新技能在后续新任务上带来收益，并检查旧技能退化与库规模增长问题。</p>
+<p><strong>读表时的重要区别：</strong> 模型对比使用通用技能与专家任务技能；反馈研究的参考配置不含同样的专家任务脚本。反馈实验初始分数只有约 3%，不应拿它与模型表约 40% 的起点直接比较。<a href="https://arxiv.org/html/2611.09030v1#A2">技能可用性表</a></p>
+<h2 id="section-12">6. Finding 3：反馈要对应可修改的决策</h2>
+<h3 id="section-13">6.1 失败出现的位置可能晚于错误决策</h3>
+<p>挂扳手的流程可以简化为：</p>
+<figure class="diagram"><pre class="mermaid">flowchart LR
+    A[估计圆环位置] --&gt; B[选择抓取方式]
+    B --&gt; C[运输与调整姿态]
+    C --&gt; D[圆环接近挂钩]
+    D --&gt; E[释放并检查]
+    A -. 早期定位误差 .-&gt; D
+    B -. 抓取遮挡圆环 .-&gt; D
+</pre><details><summary>Diagram source</summary><pre>flowchart LR
+    A[估计圆环位置] --&gt; B[选择抓取方式]
+    B --&gt; C[运输与调整姿态]
+    C --&gt; D[圆环接近挂钩]
+    D --&gt; E[释放并检查]
+    A -. 早期定位误差 .-&gt; D
+    B -. 抓取遮挡圆环 .-&gt; D
+</pre></details></figure><p>机器人最后没有挂上，日志可能停在接近或释放阶段。但根因可能是最初估错了圆环中心，或者抓取方式使后续插入不可能完成。</p>
+<p>如果 Agent 只修改最后失败的函数，它很容易反复调偏移和速度，而早期决策一直没有改变。</p>
+<h3 id="section-14">6.2 三种反馈粒度</h3>
+<table>
+<thead>
+<tr>
+<th>反馈</th>
+<th>告诉 Agent 什么</th>
+<th>可能遗漏什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Per-episode</td>
+<td>整次执行的起止状态、结果</td>
+<td>中间错误是在哪个决策引入的</td>
+</tr>
+<tr>
+<td>Per-motion</td>
+<td>每次推进仿真的运动调用结果</td>
+<td>感知、选择和规划等不产生运动的节点</td>
+</tr>
+<tr>
+<td>Per-skill</td>
+<td>语义节点的返回值与状态变化</td>
+<td>节点内部仍可能有更细的错误</td>
+</tr>
+</tbody>
+</table>
+<p>附件和论文 Table 2 的结果如下。各条件共享初始策略，经过最多五次修改，以验证集选择报告版本。</p>
+<table>
+<thead>
+<tr>
+<th>反馈方式</th>
+<th style="text-align:right">五任务整体</th>
+<th style="text-align:right">Tool Hanging</th>
+<th style="text-align:right">Syringe Packing</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>初始策略</td>
+<td style="text-align:right">3%</td>
+<td style="text-align:right">0%</td>
+<td style="text-align:right">0%</td>
+</tr>
+<tr>
+<td>Per-episode</td>
+<td style="text-align:right">25%</td>
+<td style="text-align:right">7%</td>
+<td style="text-align:right">90%</td>
+</tr>
+<tr>
+<td>Per-motion</td>
+<td style="text-align:right">36%</td>
+<td style="text-align:right">45%</td>
+<td style="text-align:right">55%</td>
+</tr>
+<tr>
+<td>Per-skill</td>
+<td style="text-align:right">52%</td>
+<td style="text-align:right">90%</td>
+<td style="text-align:right">50%</td>
+</tr>
+</tbody>
+</table>
+<p>来源：<a href="https://arxiv.org/html/2611.09030v1#S5.T2">论文 Table 2</a>。</p>
+<p>Tool Hanging 的差异符合前面的归因问题：语义反馈暴露了更早的圆环定位结果，Agent 才有机会改对模块。逐运动报告虽然更密，却可能完全不记录那个感知节点。</p>
+<p>Syringe Packing 给出相反例子：注射器横着停在容器口，最终状态已经能暴露姿态问题，Per-episode 达到 90%，高于另外两种。</p>
+<p>因此，最有依据的结论是：<strong>反馈应覆盖决定行为的关键步骤，并让证据对应到可编辑的模块。</strong> “采样更频繁”或“日志更长”都不是独立的优化目标。</p>
+<p>这组实验也包含信息覆盖差异。Per-skill 既改变组织单位，又包含部分 Per-motion 缺失的非运动结果，所以不能把全部增益归因于纯粹的文本排版。</p>
+<h2 id="section-15">7. Finding 4：坐标齐全，不代表能推导出操作关系</h2>
+<h3 id="section-16">7.1 为什么相对坐标更有用？</h3>
+<p>假设报告给出物体 A 和 B 在世界坐标系中的位姿：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msup><mrow></mrow><mi>W</mi></msup><msub><mi>T</mi><mi>A</mi></msub><mo separator="true">,</mo><mspace width="2em"/><msup><mrow></mrow><mi>W</mi></msup><msub><mi>T</mi><mi>B</mi></msub><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+{}^WT_A,\qquad {}^WT_B.
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:1.0858em;vertical-align:-0.1944em;"></span><span class="mord"><span class="mord"></span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8913em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.1389em;">W</span></span></span></span></span></span></span></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1389em;">T</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3283em;"><span style="top:-2.55em;margin-left:-0.1389em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">A</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:2em;"></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord"></span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8913em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.1389em;">W</span></span></span></span></span></span></span></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1389em;">T</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3283em;"><span style="top:-2.55em;margin-left:-0.1389em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0502em;">B</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mord">.</span></span></span></span></span></eqn></section><p>若要判断 A 相对于 B 的位置和方向，需要计算：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msup><mrow></mrow><mi>B</mi></msup><msub><mi>T</mi><mi>A</mi></msub><mo>=</mo><mo stretchy="false">(</mo><msup><mrow></mrow><mi>W</mi></msup><msub><mi>T</mi><mi>B</mi></msub><msup><mo stretchy="false">)</mo><mrow><mo>−</mo><mn>1</mn></mrow></msup><msup><mrow></mrow><mi>W</mi></msup><msub><mi>T</mi><mi>A</mi></msub><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+{}^BT_A=({}^WT_B)^{-1}{}^WT_A.
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:1.0413em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord"></span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8913em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0502em;">B</span></span></span></span></span></span></span></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1389em;">T</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3283em;"><span style="top:-2.55em;margin-left:-0.1389em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">A</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1.1413em;vertical-align:-0.25em;"></span><span class="mopen">(</span><span class="mord"><span class="mord"></span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8913em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.1389em;">W</span></span></span></span></span></span></span></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1389em;">T</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3283em;"><span style="top:-2.55em;margin-left:-0.1389em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0502em;">B</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mclose"><span class="mclose">)</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8641em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight">−</span><span class="mord mtight">1</span></span></span></span></span></span></span></span></span><span class="mord"><span class="mord"></span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8913em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.1389em;">W</span></span></span></span></span></span></span></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1389em;">T</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3283em;"><span style="top:-2.55em;margin-left:-0.1389em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">A</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mord">.</span></span></span></span></span></eqn></section><p>对于接触任务，还要继续关联功能部件：圆环中心相对钩轴的位置、插头轴相对插孔轴的夹角，以及进入开口所需的间隙。</p>
+<p>对机器人几何算法，这些是明确的变换和约束；对读取长报告的语言模型，它们可能成为多步推导错误的来源。直接提供相对关系，相当于把一部分确定性的几何计算交给更适合的工具。</p>
+<h3 id="section-17">7.2 空间表示的对照结果</h3>
+<table>
+<thead>
+<tr>
+<th>反馈表示</th>
+<th style="text-align:right">五任务整体</th>
+<th style="text-align:right">Tool Hanging</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Outcome only</td>
+<td style="text-align:right">19%</td>
+<td style="text-align:right">15%</td>
+</tr>
+<tr>
+<td>世界坐标状态与关系</td>
+<td style="text-align:right">30%</td>
+<td style="text-align:right">25%</td>
+</tr>
+<tr>
+<td>物体坐标与相对关系</td>
+<td style="text-align:right">40%</td>
+<td style="text-align:right">63%</td>
+</tr>
+<tr>
+<td>再加入功能部件标注</td>
+<td style="text-align:right">52%</td>
+<td style="text-align:right">90%</td>
+</tr>
+</tbody>
+</table>
+<p>来源：<a href="https://arxiv.org/html/2611.09030v1#S5.T3">论文 Table 3</a>。</p>
+<p>世界坐标和物体坐标可以描述相同底层状态，但它们对 Agent 的推导负担不同。功能部件标注则进一步提供 ring、shank 等与任务相关的几何语义。</p>
+<p>这里要保留两层解释：相对坐标的收益支持“信息组织影响可用性”；功能部件的收益还包含新增语义先验。后者不能全部归入“同样的信息换一种格式”。</p>
+<p>对灵巧操作，这给出一个值得检验的方向：输入除了整体物体 pose，还可以包含接触点、接触法向、可抓区域、支撑关系和允许的间隙。但这些结构的估计误差也会影响策略，需要连同错误标注一起评测。</p>
+<h2 id="section-18">8. Finding 5：指出碰撞以后，还需要构造可执行计划</h2>
+<p>Syringe Packing 的例子很直观：约 150 mm 长的注射器要穿过约 55 mm 的开口。单独检查机械臂路径是否避障是不够的，因为抓取后注射器也属于随机器人运动的几何体。</p>
+<p>用一个示意性的约束表达：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mi mathvariant="script">B</mi><mo stretchy="false">(</mo><mi>q</mi><mo stretchy="false">)</mo><mo>=</mo><msub><mi mathvariant="script">B</mi><mrow><mi>r</mi><mi>o</mi><mi>b</mi><mi>o</mi><mi>t</mi></mrow></msub><mo stretchy="false">(</mo><mi>q</mi><mo stretchy="false">)</mo><mo>∪</mo><msub><mi mathvariant="script">B</mi><mrow><mi>h</mi><mi>e</mi><mi>l</mi><mi>d</mi></mrow></msub><mo stretchy="false">(</mo><mi>q</mi><mo stretchy="false">)</mo><mo separator="true">,</mo><mspace width="2em"/><mi mathvariant="script">B</mi><mo stretchy="false">(</mo><mi>q</mi><mo stretchy="false">)</mo><mo>∩</mo><mi mathvariant="script">O</mi><mo>=</mo><mi mathvariant="normal">∅</mi><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+\mathcal B(q)=\mathcal B_{robot}(q)\cup\mathcal B_{held}(q),
+\qquad
+\mathcal B(q)\cap\mathcal O=\varnothing.
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathcal" style="margin-right:0.0304em;">B</span><span class="mopen">(</span><span class="mord mathnormal" style="margin-right:0.0359em;">q</span><span class="mclose">)</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord"><span class="mord mathcal" style="margin-right:0.0304em;">B</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:-0.0304em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right:0.0278em;">r</span><span class="mord mathnormal mtight">o</span><span class="mord mathnormal mtight">b</span><span class="mord mathnormal mtight">o</span><span class="mord mathnormal mtight">t</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mopen">(</span><span class="mord mathnormal" style="margin-right:0.0359em;">q</span><span class="mclose">)</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">∪</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord"><span class="mord mathcal" style="margin-right:0.0304em;">B</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:-0.0304em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">h</span><span class="mord mathnormal mtight">e</span><span class="mord mathnormal mtight" style="margin-right:0.0197em;">l</span><span class="mord mathnormal mtight">d</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mopen">(</span><span class="mord mathnormal" style="margin-right:0.0359em;">q</span><span class="mclose">)</span><span class="mpunct">,</span><span class="mspace" style="margin-right:2em;"></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathcal" style="margin-right:0.0304em;">B</span><span class="mopen">(</span><span class="mord mathnormal" style="margin-right:0.0359em;">q</span><span class="mclose">)</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">∩</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord mathcal" style="margin-right:0.0278em;">O</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.6633em;vertical-align:-0.0817em;"></span><span class="mord amsrm">∅</span><span class="mord">.</span></span></span></span></span></eqn></section><p><eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>q</mi></mrow><annotation encoding="application/x-tex">q</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.625em;vertical-align:-0.1944em;"></span><span class="mord mathnormal" style="margin-right:0.0359em;">q</span></span></span></span></eq> 是机器人构型，<eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi mathvariant="script">O</mi></mrow><annotation encoding="application/x-tex">\mathcal O</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord mathcal" style="margin-right:0.0278em;">O</span></span></span></span></eq> 是障碍集合。实际规划还要考虑沿整条路径的扫掠体、接触容差和允许碰撞；只验证起点与终点安全不能保证中间旋转安全。</p>
+<p>合理策略需要联合决定：在哪里抓、抓住后的物体变换、在哪里有足够空间旋转、以什么姿态穿过开口，以及下降时保持哪些约束。</p>
+<p>论文案例中的人类程序显式建立碰撞场景、注册被抓物体，并设置符合几何约束的中间位姿。Agent 常能识别“横着放不进去”，然后改成“抬高、旋转、竖直下降”，但更倾向于用固定高度、偏移和重试表达修复。</p>
+<p>这种启发式并非没有价值，它可以改善特定任务；问题在于新的障碍布局和物体长度变化是否仍被正确处理。研究下一步应检查<strong>修复是否改变了约束建模能力</strong>，而不仅检查这一次是否成功。</p>
+<h2 id="section-19">9. Finding 6：先用精确状态学习，为什么有时更差？</h2>
+<h3 id="section-20">9.1 两种课程使用不同的信息顺序</h3>
+<p>Privileged → Perception 先让 Agent 使用仿真器精确状态，学习一版策略，再转换为视觉感知并继续修改。Perception only 从第一轮起就面对感知误差。</p>
+<p>两者在同套件内控制总迭代预算。MimicGen 使用 8 轮 privileged 加 8 轮 perception；VABAR 使用 5+5 轮。不同套件使用的 Agent 和具体设置有区别，不能把它们当作完全统一的一组实验。</p>
+<table>
+<thead>
+<tr>
+<th>任务</th>
+<th style="text-align:right">有课程</th>
+<th style="text-align:right">直接使用感知</th>
+<th style="text-align:right">课程差值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Tool Hanging</td>
+<td style="text-align:right">16%</td>
+<td style="text-align:right">63%</td>
+<td style="text-align:right">−47 个百分点</td>
+</tr>
+<tr>
+<td>Gear Meshing</td>
+<td style="text-align:right">33%</td>
+<td style="text-align:right">40%</td>
+<td style="text-align:right">−7 个百分点</td>
+</tr>
+<tr>
+<td>USB-C Insertion</td>
+<td style="text-align:right">31%</td>
+<td style="text-align:right">16%</td>
+<td style="text-align:right">+15 个百分点</td>
+</tr>
+<tr>
+<td>Kitchen</td>
+<td style="text-align:right">33%</td>
+<td style="text-align:right">62%</td>
+<td style="text-align:right">−29 个百分点</td>
+</tr>
+<tr>
+<td>Coffee</td>
+<td style="text-align:right">76%</td>
+<td style="text-align:right">64%</td>
+<td style="text-align:right">+12 个百分点</td>
+</tr>
+<tr>
+<td>Threading</td>
+<td style="text-align:right">86%</td>
+<td style="text-align:right">2%</td>
+<td style="text-align:right">+84 个百分点</td>
+</tr>
+<tr>
+<td>Mug Cleanup</td>
+<td style="text-align:right">93%</td>
+<td style="text-align:right">77%</td>
+<td style="text-align:right">+16 个百分点</td>
+</tr>
+<tr>
+<td>整体</td>
+<td style="text-align:right">52%</td>
+<td style="text-align:right">46%</td>
+<td style="text-align:right">+6 个百分点</td>
+</tr>
+</tbody>
+</table>
+<p>来源：<a href="https://arxiv.org/html/2611.09030v1#S5.T4">论文 Table 4</a>。该表是三个重复运行、最后三轮的平均 held-out success，统计方式不同于前面的验证集选优表。</p>
+<p>整体平均略高，但任务间差异很大。课程帮助 Threading，却显著损害 Tool Hanging 与 Kitchen。论文支持的是课程效果依赖任务和所学策略，不是课程普遍无效。</p>
+<h3 id="section-21">9.2 精确感知可能让策略依赖过窄的容差</h3>
+<p>Kitchen 的案例中，早期策略选择了锅柄上很窄的抓取部位。精确几何让这个选择看起来可靠，换成视觉估计后，定位误差就足以使抓取失败。</p>
+<p>这时只把 <code>ExactPose</code> 替换成 <code>EstimatedPose</code>，仍然保留同一个脆弱抓取方式。更鲁棒的策略可能需要重新选择接触部位、主动换视角、验证抓取，甚至重新分解任务。</p>
+<p>用流程表示，两种改动的范围不同：</p>
+<pre><code class="language-text">局部接口替换：精确定位 → 精细抓取 → 搬运
+                    ↓
+              视觉定位 → 精细抓取 → 搬运
+
+结构性调整：视觉定位 → 选择容差更大的抓取 → 验证
+                                      ↓ 失败
+                                  重观察或重抓
+</code></pre>
+<p>论文观察到，privileged 阶段结束时策略平均约 12.0 个节点，转成视觉并继续学习后约 12.7 个；直接从感知开始的最终策略平均约 16.1 个。这与“继承既有结构、主要打补丁”的解释一致，但节点数量本身不能证明策略优劣。</p>
+<p>这也是程序层面的路径依赖：早期成功会让后续搜索围绕既有分解展开。它不是神经网络权重灾难性遗忘的直接证据。</p>
+<h3 id="section-22">9.3 课程实验另有采样协议</h3>
+<p>附录 J 中，MimicGen 每轮使用 10 个新采样训练布局，并允许最多两次额外的、不计分的 probe；VABAR 使用固定四个训练布局，不允许这些 probe。两套件的探索机会不同，复现时需要分别记录。<a href="https://arxiv.org/html/2611.09030v1#A10">课程实验协议</a></p>
+<h2 id="section-23">10. 怎样判断这些结论的证据强度？</h2>
+<p>这篇论文的优势是把完整自改进系统拆开，并提供中间代码和执行证据。它让研究者可以检查“到底修了哪里”，而不仅仅看到最后一个分数。</p>
+<p>但几个边界会直接影响读者的判断。</p>
+<table>
+<thead>
+<tr>
+<th>观察结果</th>
+<th>可以支持什么</th>
+<th>仍需额外验证什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>相近起点在反馈后分化</td>
+<td>初始生成与修复表现应分别评估</td>
+<td>完全等成本、等 CLI 条件下的模型因果比较</td>
+</tr>
+<tr>
+<td>Per-skill 平均更好</td>
+<td>语义步骤反馈在这些任务上更有效</td>
+<td>等信息覆盖下，纯组织格式的独立贡献</td>
+</tr>
+<tr>
+<td>相对坐标和部件标注有收益</td>
+<td>几何信息的可用性很重要</td>
+<td>噪声感知产生同类表示时是否仍有收益</td>
+</tr>
+<tr>
+<td>新代码较多的模型改善更大</td>
+<td>技能适配行为与修复有关</td>
+<td>强制扩大修改量能否带来因果增益</td>
+</tr>
+<tr>
+<td>新布局上成绩提高</td>
+<td>任务内程序泛化有所改善</td>
+<td>新任务、新物体类别和新机器人上的迁移</td>
+</tr>
+<tr>
+<td>课程在不同任务上正负效果并存</td>
+<td>早期策略结构可能影响后续学习</td>
+<td>哪种课程与重构机制能稳定避免负迁移</td>
+</tr>
+</tbody>
+</table>
+<p>五项 VABAR 任务各自的 held-out 布局数量有限。总 rollout 多包含重复执行、验证和不同条件，不能把 28K 视为 28K 个独立的新测试环境。</p>
+<p>另一个值得保留的区别是“状态可访问”与“答案泄露”。论文主动设计了 privileged 条件和丰富的反馈条件，这些属于明确的实验变量。若要用于自己的 benchmark，应逐项规定哪些信息允许进入策略、哪些只进入训练反馈、哪些只留给评估器。不能仅凭接口能返回位姿就判断发生泄露，也不能因为某个辅助信息在本文允许，就自动认为它在其他 benchmark 中合规。</p>
+<h2 id="section-24">11. 计算成本的数字应怎样读？</h2>
+<p>附件给出的规模值得保留，但计费口径需要细化。</p>
+<table>
+<thead>
+<tr>
+<th>统计项</th>
+<th style="text-align:right">论文报告</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Table 20 policy episodes</td>
+<td style="text-align:right">27,620</td>
+<td>该表范围内的仿真执行</td>
+</tr>
+<tr>
+<td>Table 20 agent sessions</td>
+<td style="text-align:right">2,459</td>
+<td>生成、编辑及预执行修复会话</td>
+</tr>
+<tr>
+<td>Table 20 simulator hours</td>
+<td style="text-align:right">17,910</td>
+<td>各 episode 墙钟耗时之和</td>
+</tr>
+<tr>
+<td>Table 20 LLM cost</td>
+<td style="text-align:right">约 7,557 美元</td>
+<td>按论文费率重新计价的会话 token 成本</td>
+</tr>
+<tr>
+<td>Table 22 总 LLM spend</td>
+<td style="text-align:right">约 36,456 美元</td>
+<td>再纳入 pilot 和课程研究等统计</td>
+</tr>
+</tbody>
+</table>
+<p>这些来自附录 H。<strong>17,910 小时应称为累计仿真 episode 墙钟时间，不能直接当成等效满负载 GPU-hours。</strong> Table 20 的总量与 Table 22 的总支出也不属于同一覆盖范围；后者不能直接除以前者的 episode 数作为统一单次成本。论文还说明部分计费统计不包括策略内部感知工具的 API 调用。<a href="https://arxiv.org/html/2611.09030v1#A8">成本附录</a></p>
+<p>如果要评估自己的系统，更有意义的指标是：获得一个经独立布局验证的改进策略，总共消耗多少编辑会话、仿真 episode、API 费用和实际时间。预执行失败和被回退的版本也应记入成本。</p>
+<h2 id="section-25">12. 开源代码怎样与论文对应？</h2>
+<p>公开的 <a href="https://github.com/graph-robots/agentic-self-learning">agentic-self-learning 仓库</a> 提供策略生成、仿真执行、反馈生成和代码修改循环。README 展示了三个反馈配置轴：</p>
+<pre><code class="language-yaml">feedback:
+  form: [state, relations]
+  spatial: parts
+  granularity: semantic
+</code></pre>
+<p><code>form</code> 控制是否显示状态、关系或视觉信息；<code>spatial</code> 控制世界位置、物体坐标与部件；<code>granularity</code> 控制整次执行、运动调用或语义节点。它们适合用来做固定轨迹上的反馈重渲染与受控比较。</p>
+<p><strong>当前 README 描述的可运行循环，与论文主实验协议存在差别：</strong></p>
+<table>
+<thead>
+<tr>
+<th>项目</th>
+<th>论文主实验附录 C</th>
+<th>当前仓库 README</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>编辑会话</td>
+<td>新 session 读取摘要与 diff</td>
+<td>延续同一 session</td>
+</tr>
+<tr>
+<td>策略选择</td>
+<td>验证分数参与选择</td>
+<td>按训练分数选择</td>
+</tr>
+<tr>
+<td>停止条件</td>
+<td>论文预定验证与迭代规则</td>
+<td>迭代上限、连续满分训练批次或成本上限</td>
+</tr>
+</tbody>
+</table>
+<p>因此，复现应该先固定代码版本，核对数据划分、会话生命周期和策略选择规则，再比较分数。上述差异是文档核对结果；本笔记没有安装依赖或运行 GPU 实验。</p>
+<p>现成的 <a href="https://huggingface.co/datasets/keplerccc/agentic-robotics-coding-traces">Coding Traces 数据集</a> 更适合先做行为分析：把每次反馈、代码 diff 和后续执行结果关联起来，判断一次修改究竟修复了根因、只改变了失败位置，还是没有改变行为。</p>
+<h2 id="section-26">13. 对 RUA 与 Self-Evolving Skills 可以怎样进一步研究？</h2>
+<p>下面是基于论文提出的实验方向，不是作者已完成的结果。</p>
+<h3 id="section-27">13.1 把失败归因与策略修复分别评估</h3>
+<p>可以通过受控故障注入构造可验证案例，例如给定位结果加偏移、使抓取遮挡功能部件，或漏掉被抓物体的碰撞注册。</p>
+<p>让 Agent 先给出有执行证据支持的根因假设，再修改策略。分别记录：</p>
+<ul>
+<li>根因定位是否正确，证据是否对应到实际轨迹。</li>
+<li>修改是否作用于相关决策，而不是只修改最后报错位置。</li>
+<li>修改后原故障是否消失，是否引入另一种故障。</li>
+<li>新布局的完整任务成功率和局部阶段得分如何变化。</li>
+</ul>
+<p>评估用的真值根因应留在评估侧。提供给 Agent 的反馈仍由允许的观察生成，才能区分它自己推断根因的能力与直接使用答案的能力。</p>
+<h3 id="section-28">13.2 测量新技能的迁移收益</h3>
+<p>对某任务学到的新技能，可以冻结其实现，在新任务或新物体上比较“允许复用”与“不提供该技能”。训练预算、检索方式和下游调整次数保持一致。</p>
+<p>这能区分三种情况：只对原布局有效的补丁、在同任务中可复用的技能、跨任务仍有用的技能。长期库还应评估旧任务是否退化，以及检索错误是否随库规模增加。</p>
+<h3 id="section-29">13.3 将几何表示和工具能力拆开消融</h3>
+<p>一个可操作的实验矩阵是固定同一物理轨迹，分别提供原始世界状态、物体相对状态、功能部件关系和显式约束；再分别控制是否允许调用坐标变换器、碰撞检查器和运动规划器。</p>
+<p>这样可以回答：增益究竟来自更容易读懂的输入，还是来自更强的计算工具？如果部件组有额外标注，应单列成新增信息条件。</p>
+<h3 id="section-30">13.4 给策略重构明确的评估预算</h3>
+<p>针对课程负迁移，可以比较继续局部修改、保留知识但重写策略图、从感知条件重新生成三种方案。比较时把新生成成本计入总预算，并用独立验证集选版本。</p>
+<p>关键指标不是图变大了多少，而是：策略是否减少对精确状态的依赖，是否增加必要的验证与恢复，以及能否在未参与编辑的新布局上保持收益。</p>
+<p>这篇工作的研究价值，最终落在一个可验证的问题上：<strong>怎样让 Robot Coding Agent 把跨时间的物理证据转成可靠的技能与策略重构，并证明这种改进能超出当前失败案例？</strong></p>
+<footer><a href="../index.html#blog">← Back to Blog</a></footer></article></main><script src="vendor/mermaid.min.js"></script><script>mermaid.initialize({startOnLoad:true,securityLevel:"strict",theme:"neutral",fontFamily:"system-ui",flowchart:{htmlLabels:false}});</script></body></html>

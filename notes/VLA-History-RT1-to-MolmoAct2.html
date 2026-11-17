@@ -1,0 +1,168 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>从 RT-1 到 MolmoAct 2，机器人究竟学会了哪一步？ · Jieming Li</title><link rel="stylesheet" href="../assets/styles.css"><link rel="stylesheet" href="../assets/notes.css"><link rel="stylesheet" href="vendor/katex/katex.min.css"></head><body class="note-page"><header class="note-nav"><a href="../index.html#blog">← Blog</a><a href="../index.html">Jieming Li</a></header><main class="note-layout"><aside class="note-outline"><p class="eyebrow">On this page</p><nav aria-label="目录"><ol><li><a href="#section-0">1. 从选一个技能，到预测夹爪下一步怎么动</a></li><li><a href="#section-1">2. 换一台机器人，什么经验能带过去？</a></li><li><a href="#section-2">3. 动作切成 256 档，究竟会损失多少？</a></li><li><a href="#section-3">4. π₀ 为什么一次生成一段动作？</a></li><li><a href="#section-4">5. SmolVLA 把下一轮推理放在什么时候？</a></li><li><a href="#section-5">6. MolmoAct 让人能看见哪一步出了错？</a></li><li><a href="#section-6">7. 如果把盒子挪走，这些模型各自要回答什么？</a></li></ol></nav></aside><article class="note-content" id="content"><p class="eyebrow">Research notebook · 研究笔记</p><h1 id="noteTitle">从 RT-1 到 MolmoAct 2，机器人究竟学会了哪一步？</h1>
+<p>想象桌上有一只玩具恐龙，后面放着一个盒子。你说「把灭绝的动物放进盒子」，机械臂开始移动，途中有人把盒子往左挪了一点。这个小任务至少会在三个地方失败。机器人可能拿错玩具，可能认对了恐龙却从错误的位置下爪，也可能已经抓稳了，却继续朝盒子的旧位置移动。三种失败看起来都叫「任务没完成」，对应的改进却分别在语义理解、动作生成和闭环控制。</p>
+<p>Khushi 的《From RT1 to MolMoAct2: A Brief History of VLAs》把这些问题放进了同一段发展史。这份笔记沿用附件的选题顺序，用原论文核对模型和实验。文中的量化小实验来自作者，恐龙和移动盒子的贯穿例子是为了比较架构而设的假想任务。<a href="https://x.com/starlitmatcha/status/2116918927913804223">作者发布入口</a> · <a href="https://agientry.com/en/articles/from-rt1-to-molmoact2-vla-history">可读改编版</a></p>
+<h2 id="section-0">1. 从选一个技能，到预测夹爪下一步怎么动</h2>
+<p><strong>SayCan（2022）先把「做什么」落实到机器人已有的技能库。</strong> 假设人说「把洒出来的饮料擦干净」。语言模型可以给「拿海绵」较高的相关性分数，机器人的价值函数则估计在当前状态下执行这个技能的成功可能。系统将两个分数相乘，在候选技能中选出下一项。这样，离海绵太远时，「走到海绵附近」就可能排在「抓起海绵」之前。选中的底层策略负责实际移动。这个接口的能力边界也很直观，技能库里得先有能做的事。<a href="https://say-can.github.io/">SayCan 项目</a></p>
+<p><strong>RT-1（2022）把预测对象换成当下的控制动作。</strong> 最近六帧图像和一条指令进入网络。指令向量通过 FiLM 调制 EfficientNet 的视觉特征，所以面对同一帧画面，找杯子和开抽屉可以使用不同的特征通道。每帧得到 9×9 个空间特征，TokenLearner 将其压成 8 个视觉 token。这样六帧共有 48 个 token 进入 Transformer，原先是 486 个。这个压缩发生在视觉输入端，直接影响推理成本。它对小孔、细线等局部细节的代价，需要专门的任务实验才能量化。<a href="https://arxiv.org/abs/2212.06817">RT-1 论文</a></p>
+<p>输出端是另一种离散化。RT-1 一次给出 11 个动作分量，涵盖机械臂、夹爪、底盘和控制模式。连续分量各自映射为 256 档，模式分量表示离散选择。动作监督来自真实操作示范，训练时预测专家选中的档位。约 13 万条 episode、700 多项任务支持一套共享策略以约 3 Hz 运行。回到桌面例子，每次调用都能根据最近画面调整下一步，各任务共用一个控制模型。<a href="https://robotics-transformer1.github.io/">RT-1 项目</a></p>
+<p><strong>RT-2（2023）让互联网知识参与决定动作。</strong> 视觉语言模型本来就接触过恐龙、灭绝等概念。RT-2 将一条机器人动作编码成一串可由语言模型输出的 token，用网络视觉语言任务和机器人轨迹联合微调。于是「拿起灭绝的动物」可以借用预训练学到的概念关系，再用机器人示范里学到的抓取动作去执行。自回归在这里首先发生在一次控制指令的若干分量之间，例如先生成位移分量，再生成旋转和夹爪分量。一串 token 可能只表达一个时刻的动作。<a href="https://robotics-transformer2.github.io/">RT-2 官方恐龙示例与训练方法</a></p>
+<h2 id="section-1">2. 换一台机器人，什么经验能带过去？</h2>
+<p>另一台机械臂演示「把苹果放在杯子和海绵之间」。两台机器人的关节角、相机位置都可以不同，但「放在两个参照物之间」这条空间关系可以共享。困难在于，同一个训练数字在两个控制器里可能代表不同的位移、方向或持续时间。<strong>跨机体训练既要保留共同的操作关系，也要给每个平台留下合适的动作解释。</strong></p>
+<p>Open X-Embodiment 汇集超过 100 万条轨迹，覆盖 22 种机器人形态。它是数据集合。RT-1-X 和 RT-2-X 是在跨机体数据上训练的策略。比较时，最有信息量的是 RT-X 论文表 II 中的两列结果。<a href="https://robotics-transformer-x.github.io/paper.pdf">Open X-Embodiment / RT-X 论文，表 II</a></p>
+<table>
+<thead>
+<tr>
+<th>同为 55B 的设置</th>
+<th style="text-align:right">其他平台出现过的技能，改用 Google Robot 执行</th>
+<th style="text-align:right">原 RT-2 的物体、背景及环境泛化测试</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RT-2</td>
+<td style="text-align:right">27.3%</td>
+<td style="text-align:right">62%</td>
+</tr>
+<tr>
+<td>RT-2-X</td>
+<td style="text-align:right">75.8%</td>
+<td style="text-align:right">61%</td>
+</tr>
+<tr>
+<td>RT-2-X 去掉 Bridge 数据</td>
+<td style="text-align:right">42.8%</td>
+<td style="text-align:right">54%</td>
+</tr>
+</tbody>
+</table>
+<p>第一列专门挑了出现在 WidowX 的 Bridge 数据、却缺席于原 Google Robot 数据的技能。加入跨机体数据带来 <strong>48.5 个百分点</strong>的提升，移除 Bridge 后又下降了 33 个百分点。第二列考察另一种变化，两模型的成绩几乎持平。这里得到支持的是具体技能向已有平台的迁移。要估计第一次接入全新机械臂的成本，还需要另一种实验。<a href="https://robotics-transformer-x.github.io/paper.pdf">RT-X 实验设计与消融</a></p>
+<p><strong>Octo 和 OpenVLA（均为 2024 年）给了这批数据两种用法。</strong></p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Octo</th>
+<th>初版 OpenVLA</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>训练起点</td>
+<td>在约 80 万条机器人轨迹上训练通用 Transformer 策略</td>
+<td>从预训练 Prismatic 视觉语言模型出发，用约 97 万条机器人 episode 训练动作预测</td>
+</tr>
+<tr>
+<td>观测如何进入策略</td>
+<td>观测与任务编码成 token，可学习的 readout token 汇聚动作头需要的信息</td>
+<td>将 SigLIP 和 DINOv2 图像特征拼接、投影，再与语言一起送入 Llama 2</td>
+</tr>
+<tr>
+<td>动作如何生成</td>
+<td>扩散动作头生成连续的多步动作</td>
+<td>7B 模型自回归生成离散动作 token，七维控制量各对应一档</td>
+</tr>
+<tr>
+<td>迁移到新平台时</td>
+<td>可以更换观测编码器、动作头，再用目标数据微调</td>
+<td>可在目标机器人的数据上进行参数高效微调</td>
+</tr>
+</tbody>
+</table>
+<p>Octo 已经在生成连续动作，OpenVLA 同期仍然选择离散 token。这两条路线一直并行。对 OpenVLA 也要分开问两个问题。「给定常见指令，机械臂能不能操作成功」主要检验执行能力。「换成训练轨迹里没出现过的概念，还能不能选对物体」则更依赖视觉语言知识保留了多少。<a href="https://octo-models.github.io/">Octo 项目</a> · <a href="https://openvla.github.io/">OpenVLA 项目与论文</a></p>
+<h2 id="section-2">3. 动作切成 256 档，究竟会损失多少？</h2>
+<p>这是文章里最容易自己算明白的一段。即使模型每次都能猜中正确的 token，把连续动作编码成 token 再解码，也可能回不到原值。作者从 LIBERO 的三段示范中取出 843 个动作，比较每维 16、32、64、128、256 档，以及全范围和第 1 至第 99 百分位两种取值区间。这里考察的是<strong>已知专家动作后的离线重建</strong>。<a href="https://agientry.com/en/articles/from-rt1-to-molmoact2-vla-history">作者文章及实验图 4–5 的可读版本</a></p>
+<p>举个独立算例。假设某个平移分量的范围是 −10 到 +10 毫米，使用含两个端点的 16 个等距代表值。间距是 20/15 ≈ 1.33 毫米，区间内取最近值最多差 0.67 毫米。若把范围缩成 −5 到 +5 毫米，同样 16 档，区间内最大误差降到 0.33 毫米。但专家偶尔要求移动 +9 毫米时，只能输出 +5，单次就差了 4 毫米。</p>
+<p>一般地，含端点的 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>B</mi></mrow><annotation encoding="application/x-tex">B</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord mathnormal" style="margin-right:0.0502em;">B</span></span></span></span></eq> 个代表值间隔为 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi mathvariant="normal">Δ</mi><mo>=</mo><mo stretchy="false">(</mo><mi>U</mi><mo>−</mo><mi>L</mi><mo stretchy="false">)</mo><mi mathvariant="normal">/</mi><mo stretchy="false">(</mo><mi>B</mi><mo>−</mo><mn>1</mn><mo stretchy="false">)</mo></mrow><annotation encoding="application/x-tex">\Delta=(U-L)/(B-1)</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord">Δ</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mopen">(</span><span class="mord mathnormal" style="margin-right:0.109em;">U</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal">L</span><span class="mclose">)</span><span class="mord">/</span><span class="mopen">(</span><span class="mord mathnormal" style="margin-right:0.0502em;">B</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord">1</span><span class="mclose">)</span></span></span></span></eq>。对范围内样本，最近邻误差最多 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi mathvariant="normal">Δ</mi><mi mathvariant="normal">/</mi><mn>2</mn></mrow><annotation encoding="application/x-tex">\Delta/2</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord">Δ/2</span></span></span></span></eq>。范围外样本的误差则由它离边界有多远决定。增加档数能持续改善前者，后者仍受裁剪边界限制。如果代码用的是 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>B</mi></mrow><annotation encoding="application/x-tex">B</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord mathnormal" style="margin-right:0.0502em;">B</span></span></span></span></eq> 个等宽区间并取区间中心，间距要按 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false">(</mo><mi>U</mi><mo>−</mo><mi>L</mi><mo stretchy="false">)</mo><mi mathvariant="normal">/</mi><mi>B</mi></mrow><annotation encoding="application/x-tex">(U-L)/B</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mopen">(</span><span class="mord mathnormal" style="margin-right:0.109em;">U</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal">L</span><span class="mclose">)</span><span class="mord">/</span><span class="mord mathnormal" style="margin-right:0.0502em;">B</span></span></span></span></eq> 计算。</p>
+<p>在作者这批数据上，16 档时裁剪略有帮助。到了 256 档，<strong>裁剪版的平移重建 RMSE 约为全范围版的 5.5 倍</strong>。读这个倍数要带上指标、样本和动作分量。夹爪每步偏一点，偏差可能在后续动作中抵消，也可能在接触边缘触发滑脱。测出实际影响，需要让策略在环境中闭环执行。笔记沿用作者报告的数值，未取得这三段原始轨迹作独立复算。<a href="https://agientry.com/en/articles/from-rt1-to-molmoact2-vla-history">实验图 5 与作者讨论</a></p>
+<h2 id="section-3">4. π₀ 为什么一次生成一段动作？</h2>
+<p>回到那只恐龙。假设面前挡着一个杯子，示范者有时从左绕、有时从右绕。如果模型对同一观测只输出一条轨迹，并以平方误差拟合两种走法，最优点预测会趋向条件均值。两条可行路线的平均线恰好可能穿过杯子。离散概率模型也能表达多种选择，π₀ 的具体做法是直接在<strong>整段连续动作的联合空间</strong>里建模这些选择。<a href="https://arxiv.org/abs/2410.24164">π₀ 论文</a></p>
+<p>令 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>A</mi><mo>=</mo><mo stretchy="false">(</mo><msub><mi>a</mi><mi>t</mi></msub><mo separator="true">,</mo><mo>…</mo><mo separator="true">,</mo><msub><mi>a</mi><mrow><mi>t</mi><mo>+</mo><mi>H</mi><mo>−</mo><mn>1</mn></mrow></msub><mo stretchy="false">)</mo></mrow><annotation encoding="application/x-tex">A=(a_t,\ldots,a_{t+H-1})</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord mathnormal">A</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal">a</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="minner">…</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal">a</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3283em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">t</span><span class="mbin mtight">+</span><span class="mord mathnormal mtight" style="margin-right:0.0813em;">H</span><span class="mbin mtight">−</span><span class="mord mtight">1</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2083em;"><span></span></span></span></span></span></span><span class="mclose">)</span></span></span></span></eq> 为示范动作块，<eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>c</mi></mrow><annotation encoding="application/x-tex">c</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.4306em;"></span><span class="mord mathnormal">c</span></span></span></span></eq> 包含图像、指令和机器人状态。取与 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>A</mi></mrow><annotation encoding="application/x-tex">A</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord mathnormal">A</span></span></span></span></eq> 同形状的高斯噪声 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>ϵ</mi></mrow><annotation encoding="application/x-tex">\epsilon</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.4306em;"></span><span class="mord mathnormal">ϵ</span></span></span></span></eq>，用从噪声走向动作的时间约定，构造训练对</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi>x</mi><mi>τ</mi></msub><mo>=</mo><mo stretchy="false">(</mo><mn>1</mn><mo>−</mo><mi>τ</mi><mo stretchy="false">)</mo><mi>ϵ</mi><mo>+</mo><mi>τ</mi><mi>A</mi><mo separator="true">,</mo><mspace width="2em"/><mi mathvariant="script">L</mi><mo>=</mo><mi mathvariant="double-struck">E</mi><mo fence="false" stretchy="true" minsize="1.2em" maxsize="1.2em">∥</mo><msub><mi>v</mi><mi>θ</mi></msub><mo stretchy="false">(</mo><msub><mi>x</mi><mi>τ</mi></msub><mo separator="true">,</mo><mi>τ</mi><mo separator="true">,</mo><mi>c</mi><mo stretchy="false">)</mo><mo>−</mo><mo stretchy="false">(</mo><mi>A</mi><mo>−</mo><mi>ϵ</mi><mo stretchy="false">)</mo><msup><mo fence="false" stretchy="true" minsize="1.2em" maxsize="1.2em">∥</mo><mn>2</mn></msup><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+x_\tau=(1-\tau)\epsilon+\tau A,\qquad
+\mathcal L=\mathbb E\big\|v_\theta(x_\tau,\tau,c)-(A-\epsilon)\big\|^2.
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.5806em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal">x</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.1132em;">τ</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mopen">(</span><span class="mord">1</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal" style="margin-right:0.1132em;">τ</span><span class="mclose">)</span><span class="mord mathnormal">ϵ</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.8778em;vertical-align:-0.1944em;"></span><span class="mord mathnormal" style="margin-right:0.1132em;">τ</span><span class="mord mathnormal">A</span><span class="mpunct">,</span><span class="mspace" style="margin-right:2em;"></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathcal">L</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1.2em;vertical-align:-0.35em;"></span><span class="mord mathbb">E</span><span class="mord"><span class="delimsizing mult"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.85em;"><span style="top:-2.85em;"><span class="pstrut" style="height:3.2em;"></span><span style="width:0.556em;height:1.2em;"><svg xmlns="http://www.w3.org/2000/svg" width="0.556em" height="1.2em" viewBox="0 0 556 1200"><path d="M145 15 v585 v0 v585 c2.667,10,9.667,15,21,15
+c10,0,16.667,-5,20,-15 v-585 v0 v-585 c-2.667,-10,-9.667,-15,-21,-15
+c-10,0,-16.667,5,-20,15z M188 15 H145 v585 v0 v585 h43z
+M367 15 v585 v0 v585 c2.667,10,9.667,15,21,15
+c10,0,16.667,-5,20,-15 v-585 v0 v-585 c-2.667,-10,-9.667,-15,-21,-15
+c-10,0,-16.667,5,-20,15z M410 15 H367 v585 v0 v585 h43z"/></svg></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.35em;"><span></span></span></span></span></span></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0359em;">v</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:-0.0359em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0278em;">θ</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal">x</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.1132em;">τ</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal" style="margin-right:0.1132em;">τ</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal">c</span><span class="mclose">)</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mopen">(</span><span class="mord mathnormal">A</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1.404em;vertical-align:-0.35em;"></span><span class="mord mathnormal">ϵ</span><span class="mclose">)</span><span class="mord"><span class="mord"><span class="delimsizing mult"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.85em;"><span style="top:-2.85em;"><span class="pstrut" style="height:3.2em;"></span><span style="width:0.556em;height:1.2em;"><svg xmlns="http://www.w3.org/2000/svg" width="0.556em" height="1.2em" viewBox="0 0 556 1200"><path d="M145 15 v585 v0 v585 c2.667,10,9.667,15,21,15
+c10,0,16.667,-5,20,-15 v-585 v0 v-585 c-2.667,-10,-9.667,-15,-21,-15
+c-10,0,-16.667,5,-20,15z M188 15 H145 v585 v0 v585 h43z
+M367 15 v585 v0 v585 c2.667,10,9.667,15,21,15
+c10,0,16.667,-5,20,-15 v-585 v0 v-585 c-2.667,-10,-9.667,-15,-21,-15
+c-10,0,-16.667,5,-20,15z M410 15 H367 v585 v0 v585 h43z"/></svg></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.35em;"><span></span></span></span></span></span></span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:1.054em;"><span style="top:-3.3029em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">2</span></span></span></span></span></span></span></span><span class="mord">.</span></span></span></span></span></eqn></section><p>这里也用了平方误差，但回归对象变了。网络在<strong>给定中间位置和生成时间</strong>的条件下预测局部速度。推理时从一份新噪声出发，沿学到的场积分，最终得到一整条动作序列。每个样本可以收敛到不同走法。<eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>τ</mi></mrow><annotation encoding="application/x-tex">\tau</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.4306em;"></span><span class="mord mathnormal" style="margin-right:0.1132em;">τ</span></span></span></span></eq> 是在模型内部生成这条路线的进度，<eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>t</mi></mrow><annotation encoding="application/x-tex">t</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6151em;"></span><span class="mord mathnormal">t</span></span></span></span></eq> 才是机械臂执行到的时刻。生成动作块所用的几次积分，全部发生在执行它之前。<a href="https://arxiv.org/abs/2410.24164">π₀ 技术报告</a> · <a href="Flow%20Matching%20and%20Diffusion%20Models%EF%BC%88%E4%BA%8C%EF%BC%89.html">本地 Flow Matching 笔记</a></p>
+<p>π₀ 将约 3B 的 PaliGemma 和约 300M 的动作专家结合，一次预测 50 步。预测时域 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>H</mi></mrow><annotation encoding="application/x-tex">H</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord mathnormal" style="margin-right:0.0813em;">H</span></span></span></span></eq>、实际执行多少步后重看画面，以及电机控制周期，是三个独立的量。举例说，在假设的 50 Hz 控制器上，50 步覆盖 1 秒。只执行前 5 步，就在 0.1 秒后有一次重新观测的机会，观测处理和新一轮推理的延迟还需另算。这个算例也说明了为什么动作曲线看起来流畅，遇到突然移动的盒子仍可能来不及反应。<a href="https://www.pi.website/blog/pi0">π₀ 项目</a></p>
+<h2 id="section-4">5. SmolVLA 把下一轮推理放在什么时候？</h2>
+<p>SmolVLA（2025）将模型压到约 450M 参数。它减少每幅图像的视觉 token，读取视觉语言主干的中间层，让较小的动作专家交替整合视觉语言条件和动作序列内部的信息。这样减少了预测一个动作块的计算量。<a href="https://huggingface.co/blog/smolvla">SmolVLA 官方说明</a></p>
+<p>部署端还有一项独立改动。如果先执行完 A，再拍照、推理 B，机械臂在 B 算出来前会停一下。异步执行让机器人在 A 还有一部分动作排队时就发送新观测，后台开始算 B。控制器继续执行 A，并在两段动作覆盖同一时刻时合并预测。团队在其评测中报告约 <strong>2 倍任务吞吐量</strong>。这里的分母是实际用时，统计的是单位时间完成的任务数。它衡量了推理与执行重叠带来的系统收益。<a href="https://huggingface.co/blog/smolvla">SmolVLA 异步执行与结果</a></p>
+<p>如果盒子恰好在发送图像之后移动，新动作块依据的仍是旧位置。这时真正影响纠错时间的量包括图像的拍摄时间、剩余队列长度、下一次预测何时可用，以及旧动作能否被替换。单独报电机频率会漏掉这段等待。</p>
+<h2 id="section-5">6. MolmoAct 让人能看见哪一步出了错？</h2>
+<p><strong>MolmoAct（2025）把空间判断变成可读的中间输出。</strong> 训练时借助 Depth Anything V2 提供深度监督，将深度图压成离散 token。模型随后预测末端在图像上的运动轨迹，再给出机器人动作。若它拿起错物，看深度和轨迹可以进一步定位问题。轨迹从一开始就指向杯子，值得查目标定位。轨迹指向恐龙但夹爪提前闭合，值得查三维对齐和执行时序。一条投影到图像上的线可以对应多种三维运动，接触力和物体受力后的状态仍需其他观测或模型来确定。<a href="https://arxiv.org/abs/2508.07917">MolmoAct 论文</a></p>
+<p><strong>MolmoAct 2（2026）把显式深度计算做成一个可比较的选择。</strong> Molmo 2-ER 主干提供具身空间表征，动作专家读取主干缓存的注意力键和值，用 flow matching 生成连续动作。训练系统还提供开放的 FAST 动作 tokenizer，离散动作监督与连续动作生成由此能出现在同一套系统中。可选的 Think 版本预测深度 token，跨时刻只更新发生变化的区域。<a href="https://arxiv.org/abs/2605.02881">技术报告</a> · <a href="https://allenai.org/blog/molmoact2">Ai2 发布说明</a></p>
+<table>
+<thead>
+<tr>
+<th>模型</th>
+<th style="text-align:right">单次动作调用耗时，LIBERO / 单张 H100</th>
+<th style="text-align:right">LIBERO 后训练平均成功率</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>MolmoAct</td>
+<td style="text-align:right">约 6,700 ms</td>
+<td style="text-align:right">86.6%</td>
+</tr>
+<tr>
+<td>MolmoAct 2 基础版</td>
+<td style="text-align:right">约 180 ms</td>
+<td style="text-align:right">97.2%</td>
+</tr>
+<tr>
+<td>MolmoAct 2-Think</td>
+<td style="text-align:right">约 790 ms</td>
+<td style="text-align:right">98.1%</td>
+</tr>
+</tbody>
+</table>
+<p>比较同代两个版本，显式深度版本每次多花约 610 ms，平均成功率高 0.9 个百分点。如果任务是静态台面上的摆放，可能愿意多等这段时间。如果目标正在移动，决策期间它已经换了位置。Ai2 也说明其部署通常连续执行 10–30 步才再次推理。生成时看到的空间更准确，与执行时能多快用上新证据，是两项不同能力。<a href="https://allenai.org/blog/molmoact2">Ai2 的延迟、LIBERO 结果与部署限制</a></p>
+<h2 id="section-6">7. 如果把盒子挪走，这些模型各自要回答什么？</h2>
+<p>这是从文章延伸出的一个评测思路，能把研究讨论落到同一次操作上。先固定机器人、对象、起始姿态与指令，再在不同回合里分别改变一件事。</p>
+<table>
+<thead>
+<tr>
+<th>改变什么</th>
+<th>看哪个具体行为</th>
+<th>能回答的问题</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>将「恐龙」换成「灭绝的动物」</td>
+<td>第一次伸手选中了谁</td>
+<td>语言和视觉知识能否迁移到目标选择</td>
+</tr>
+<tr>
+<td>保持指令，缩窄杯子旁的通道</td>
+<td>末端最小间隙、碰撞次数</td>
+<td>空间表示与动作精度能否支撑绕行</td>
+</tr>
+<tr>
+<td>夹起玩具后横移盒子</td>
+<td>从扰动到首次正确修正的毫秒数</td>
+<td>新观测多久能改变已经排队的动作</td>
+</tr>
+<tr>
+<td>让玩具在夹爪中轻微滑移</td>
+<td>滑移后是否调整夹持、最终是否掉落</td>
+<td>策略能获取并利用哪些接触反馈</td>
+</tr>
+<tr>
+<td>放置失败后继续给时间</td>
+<td>能否识别失败、回到可重试状态、再次成功</td>
+<td>执行策略或上层 Agent 如何恢复任务</td>
+</tr>
+</tbody>
+</table>
+<p>这也解释了作者最后为什么谈 RL 和世界模型。专家示范给出了成功时的一种走法。若盒子已经偏移或玩具开始滑落，策略还需要知道新的动作会产生什么后果。世界模型可以预测几种候选动作的结果，交互反馈可以用来比较或改进这些选择。它们能否帮上忙，要看对滑移、碰撞等关键事件的预测是否准确，以及在动作仍然来得及改变时，系统能否完成这次计算。</p>
+<footer><a href="../index.html#blog">← Back to Blog</a></footer></article></main></body></html>

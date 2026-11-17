@@ -1,0 +1,50 @@
+# UniWAM：统一物理推理、世界生成和动作预测
+
+UniWAM（Unified World-Action Model）试图把 VLA 和 WAM 的优点放在同一个模型中。VLA 擅长语言理解和任务语义，但动作监督不一定能学好物理未来；WAM 擅长利用视频时序先验，却可能缺少复杂语义推理和开放场景理解。
+
+UniWAM 的基本分工是三个协同 Expert：Physical Reasoner、World Generator 和 Action Predictor。模型同时接触视觉问答、人类第一视角视频和机器人操作轨迹，让不同数据源分别提供语义、未来状态和动作监督。
+
+## 1. 三个 Expert 如何配合
+
+Physical Reasoner 负责理解当前场景、物体关系和任务条件；World Generator 预测未来视觉或物理相关表示；Action Predictor 根据当前历史、任务和未来表示输出动作块。
+
+这种设计的目标不是单独提高某一个模块，而是让物理推理和未来预测真正参与动作选择。未来表示如果只用于辅助视频损失，却不改变动作，就很难证明它对控制有价值。
+
+## 2. 两个关键的动作后训练设计
+
+### Future-Frame Noise Augmentation
+
+Action Expert 如果总是读取接近 Ground Truth 的未来 latent，训练时会形成依赖，部署时一旦 World Generator 预测不准，动作就可能完全失效。
+
+UniWAM 对未来视频 latent 增加额外噪声，迫使 Action Expert 在未来预测不完美时仍然能够控制。这个设计把“预测误差下的可执行性”直接放进动作训练，而不是等到部署时才暴露。
+
+### History-Conditioned Flow Matching
+
+普通 Flow Matching 通常从标准高斯噪声开始生成动作块。UniWAM 则把之前执行过的动作块加少量噪声作为初始化：
+
+\[
+A^1_t=A_{t-1}+\epsilon,\qquad
+\epsilon\sim\mathcal N(0,\eta^2I)
+\]
+
+然后学习从历史动作附近流向目标动作块。这样可以利用动作连续性，减少去噪步数，并让短时控制更加稳定。
+
+但历史初始化也可能带来惯性偏置。遇到快速反向、碰撞恢复或接触模式切换时，过去的动作不一定是好的起点，需要单独评估。
+
+## 3. 实验结果
+
+截至论文 v4，作者报告 LIBERO 平均成功率 99.2%，LIBERO-Plus 平均 92.6%；RoboTwin 2.0 的 Clean2Clean 为 75.14%，Clean2Rand 为 68.32%。后两项更能反映环境扰动下的鲁棒性。
+
+这些数字支持 UniWAM 的统一训练路线，但也要注意不同基准的任务、数据和后训练配置不同，不能只用一个平均成功率判断所有能力。
+
+## 4. 和其他 WAM 路线的区别
+
+RoboActualizer 更强调冻结已有世界模型，只训练未来选择和动作实现模块；VPP2 更强调先把操作视频预测能力做强，再蒸馏动作；UniWAM 则把推理、世界生成和动作预测放在同一个协同系统中，并主动训练预测误差下的动作鲁棒性。
+
+它们的差异取决于预训练世界模型是否已经覆盖目标任务。如果已有未来表示足够好，轻量 Actualizer 更省资源；如果模型不理解操作事件，就需要像 VPP2 一样先改善视频预测。UniWAM 适合研究两者联合训练时怎样避免误差传递。
+
+## 5. 局限与判断
+
+统一架构会带来更复杂的数据配比、训练目标和模块耦合。World Generator 的误差可能影响 Action Predictor，Physical Reasoner 的监督也可能只在特定数据源上有效。History-Conditioned Flow 在连续动作上有优势，但对突发状态变化的恢复能力仍需要更多实验。
+
+UniWAM 的启发是：World Model 和 Action Model 之间不能只通过一条“理想未来”接口连接。训练时应该模拟未来预测不准确的情况，让动作策略学会利用预测，也学会在预测失真时继续工作。

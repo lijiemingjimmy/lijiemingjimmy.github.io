@@ -1,0 +1,387 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SpatialTree：空间能力怎么拆开测，又该怎么一起训练？ · Jieming Li</title><link rel="stylesheet" href="../assets/styles.css"><link rel="stylesheet" href="../assets/notes.css"><link rel="stylesheet" href="vendor/katex/katex.min.css"></head><body class="note-page"><header class="note-nav"><a href="../index.html#blog">← Blog</a><a href="../index.html">Jieming Li</a></header><main class="note-layout"><aside class="note-outline"><p class="eyebrow">On this page</p><nav aria-label="目录"><ol><li><a href="#section-0">1. 这篇 benchmark 有什么用？</a></li><li><a href="#section-1">2. 四层空间能力，究竟怎么区分？</a></li><li><a href="#section-6">3. Benchmark 数据是怎样构建的？</a></li><li><a href="#section-11">4. L4 的分数，为什么不能直接叫任务成功率？</a></li><li><a href="#section-12">5. 作者怎么研究能力之间的关系？</a></li><li><a href="#section-13">6. SFT 实验：怎么训练，又迁移到了哪里？</a></li><li><a href="#section-17">7. RL 实验：为什么要有 Auto-Think？</a></li><li><a href="#section-21">8. 这棵“树”到底被证明到了什么程度？</a></li><li><a href="#section-22">9. 和 RynnBrain 1.1 放在一起看</a></li><li><a href="#section-23">10. 对 RUA / Dex-RUA，我会怎么借鉴？</a></li><li><a href="#section-27">11. 读完最值得留下的判断</a></li><li><a href="#section-28">原文定位与核对说明</a></li></ol></nav></aside><article class="note-content" id="content"><p class="eyebrow">Research notebook · 研究笔记</p><h1 id="noteTitle">SpatialTree：空间能力怎么拆开测，又该怎么一起训练？</h1>
+<p>SpatialTree 研究的是一个很实际的问题：<strong>一个模型空间题答得不好，到底缺了哪种能力？补距离、大小或跨视角对应关系，能不能让它更会规划和行动？</strong></p>
+<p>作者先提出四层能力分类，再用 SpatialTree-Bench 测量这些能力，最后通过 SFT 和 RL 改变训练内容，观察收益会迁移到哪里。它最有价值的部分，是把“空间智能更强了”拆成可分析的能力变化。</p>
+<p>读完可以先记住三件事：基础空间技能之间并不总能互相带动；多种技能联合训练在实验中优于单独训练；感知题与复杂规划题对显式推理的需求不同。这里的证据主要来自多模态模型评测，迁移到真实机器人闭环控制还需要进一步验证。</p>
+<p>论文：<strong>SpatialTree: How Spatial Abilities Branch Out in MLLMs</strong>。作者为 Yuxi Xiao、Longfei Li、Shen Yan、Xinhang Liu、Sida Peng、Yunchao Wei、Xiaowei Zhou、Bingyi Kang，来自浙江大学、ByteDance Seed、北京交通大学。</p>
+<p><a href="https://arxiv.org/abs/2512.20617">论文</a> · <a href="https://arxiv.org/html/2512.20617v2">全文 HTML</a> · <a href="https://arxiv.org/pdf/2512.20617v2">PDF</a> · <a href="https://spatialtree.github.io/">项目主页</a></p>
+<p>版本说明：文中的解释性例子、简化公式和研究建议不等同于作者完整实现。</p>
+<h2 id="section-0">1. 这篇 benchmark 有什么用？</h2>
+<p>假设两个模型在机器人任务上都是 40% 成功率，它们可能有完全不同的问题。</p>
+<p>一个模型看不准杯子的深度，计划正确却总是抓空；另一个能定位杯子，但不记得刚才把目标容器放在哪里。只看最终成功率，两者没有区别；换一种训练数据，效果却可能完全不同。</p>
+<p>SpatialTree 想提供一张能力分布表：分别测空间感知、语义理解与记忆、空间推演，以及行动相关能力。这样可以回答：</p>
+<ul>
+<li>改进发生在哪个能力分支？</li>
+<li>训练某种基础技能之后，其他技能受益还是退化？</li>
+<li>总分上涨是否掩盖了某个关键能力下降？</li>
+<li>哪些任务适合直接回答，哪些任务值得多花推理计算？</li>
+</ul>
+<p>这更接近模型训练与评测的诊断工具。真实部署前，仍然需要执行评测，因为空间题分数只能覆盖操作能力的一部分。</p>
+<h2 id="section-1">2. 四层空间能力，究竟怎么区分？</h2>
+<p>L1–L4 是作者对任务能力的分类，不是神经网络的四个模块，也不意味着模型必须按四阶段顺序训练。</p>
+<table>
+<thead>
+<tr>
+<th>层级</th>
+<th>核心问题</th>
+<th>杯子操作中的例子</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>L1 Perception</td>
+<td>当前观测中的几何和运动是什么？</td>
+<td>杯子在哪里、多远、朝哪边倾斜？</td>
+</tr>
+<tr>
+<td>L2 Mental Mapping</td>
+<td>这些观察有什么含义，怎样组织和记住？</td>
+<td>哪部分可抓；转动相机后杯子还是原来那个吗？</td>
+</tr>
+<tr>
+<td>L3 Mental Simulation</td>
+<td>如果这样操作，接下来会发生什么？</td>
+<td>直接搬杯子会撞到遮挡物吗；应该先挪哪个物体？</td>
+</tr>
+<tr>
+<td>L4 Agentic Competence</td>
+<td>怎样根据任务和观测选择行动？</td>
+<td>给出移动、旋转、抓取或导航动作。</td>
+</tr>
+</tbody>
+</table>
+<p>杯子例子用于理解分类，并非原文所有任务都在控制同一个机器人。</p>
+<h3 id="section-2">L1：感知也有很多种</h3>
+<p>L1 包含五组、11 项细分能力：</p>
+<table>
+<thead>
+<tr>
+<th>分组</th>
+<th>细分能力</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Geometry</td>
+<td>Distance、Size、Shape</td>
+</tr>
+<tr>
+<td>Motion</td>
+<td>Egocentric Motion、Allocentric Motion</td>
+</tr>
+<tr>
+<td>Orientation</td>
+<td>Gravity、Object Orientation</td>
+</tr>
+<tr>
+<td>Relation</td>
+<td>Topology、Correspondence</td>
+</tr>
+<tr>
+<td>Localization</td>
+<td>Detection、Grounding</td>
+</tr>
+</tbody>
+</table>
+<p>Egocentric Motion 是观察者自身运动，Allocentric Motion 是外部物体运动。画面中的车往左移，可能是车动了，也可能是相机动了，二者需要区分。</p>
+<p>Topology 关注包含、重叠等基本空间配置；Correspondence 关注跨视角的同一物体或位置。知道两张照片都出现了椅子，与知道其中哪两把椅子是同一个实体，要求不同。</p>
+<p>L1 也包含深度、三维定位、朝向等困难视觉任务。“基础”表示它在能力体系中的位置，不表示它容易解决。</p>
+<h3 id="section-3">L2：从局部观察变成有语义、可检索的空间知识</h3>
+<p>L2 分成 Understanding 和 Memory，共七项细分能力。前者包括空间描述、关系理解、运动理解、视角转换和 Affordance；后者包括 Cognitive Map 与 Memory Retrieval。</p>
+<p>比如“这个物体有一个弯曲突出部位”偏几何描述，“这个部位可以握住并提起杯子”就涉及可供性。再比如相机离开桌面后仍能回答钥匙的位置，就需要利用之前的观察。</p>
+<p>这里的认知地图是能力目标。模型可能通过上下文隐式完成，也可能借助某种显式表示；分类本身没有指定必须使用 BEV、点云或场景图。</p>
+<h3 id="section-4">L3：把关系用于推演和规划</h3>
+<p>L3 包括因果推理与序列规划，共五项细分能力。重点从“世界是什么样”转到“满足规则的变化会怎样发生”。</p>
+<p>一个直观例子是积木重排：知道每块积木的位置还不够，需要考虑移动后有没有支撑、是否占据目标位置、操作顺序是否可行。</p>
+<p>这些题可以通过视觉问答与规则推演测量。答对不意味着模型内部一定有可持续滚动、物理一致的生成式世界模型；这里测到的是推演结果。</p>
+<h3 id="section-5">L4：把空间信息用于目标执行和探索</h3>
+<p>L4 包括 Goal-Driven Execution 与 Open-World Exploration，共四项细分能力，覆盖导航、操作、知识获取和自主设定目标等方向。</p>
+<p>这层离 Agent 最近，但要分清两件事：作者希望描述的完整行动能力，以及 benchmark 实际能够测到的代理任务。后者包括从图像预测动作序列、在视频帧中选择动作、判断任务进展等。</p>
+<p>因此四层可以作为能力组织方式，不能直接理解成一条已经证明的认知发展因果链。</p>
+<h2 id="section-6">3. Benchmark 数据是怎样构建的？</h2>
+<p>SpatialTree-Bench 覆盖 27 项细分能力、41 种评测任务。作者重新组织已有数据集，并用 SpatialPlus 补充覆盖不足的能力。</p>
+<h3 id="section-7">L1：把视觉模型的输出变成可提问的空间标签</h3>
+<p>例如先得到深度图、对应关系、相机重力方向或物体朝向，再用模板生成问题，最后通过语言模型改写。</p>
+<p>论文使用的专家模型包括 Depth Anything 3、SpatialTracker、GeoCalib 和 OrientAnything。可以把流程概括为：</p>
+<pre><code class="language-text">图像或视频
+  → 专家视觉模型提取空间信息
+  → 按能力设计问题与答案
+  → 模板与语言改写
+  → 空间问答样本
+</code></pre>
+<p>优势是生成效率高，能够覆盖连续数值、跨视角关系等人工标注成本较高的任务。相应地，部分标签属于专家模型的估计值。模型在这些题上与参考答案一致，不等于已经获得真实测量级的几何精度。</p>
+<h3 id="section-8">L2：先整理场景，再构造地图和记忆问题</h3>
+<p>作者利用三维重建流程，从多视角或视频生成 BEV 等场景信息，再构造描述、认知地图和记忆检索问题。</p>
+<p>要区分标注者的信息与被测模型的信息：构造答案时可以用完整重建结果，被测模型的输入未必包含这张地图。任务是在检查模型能否从给定观察中恢复相关知识。</p>
+<h3 id="section-9">L3：已有规则与推理数据，加上结构化问答</h3>
+<p>几何变换、运动和规划题来自已有标注资源，再通过模板和语言模型补充或改写推理表达。</p>
+<p>这类题目的判断依赖规则和最终答案。模型生成一段流畅的解释，不能自动算作空间推演正确；评测需要检查它是否满足题目约束。</p>
+<h3 id="section-10">L4：把运动记录转成语言模型可表达的动作</h3>
+<p>Spatial Action Mapping 将相机运动、手部动作或机器人动作映射成统一、可输出的形式。</p>
+<p>导航可以使用前后、左右、上下平移以及旋转原语；机器人夹爪任务使用末端平移、旋转与夹爪开闭；人手任务还涉及 Push、Pull、Grab 等交互原语。</p>
+<p>这里的统一主要发生在接口和评测层。它让不同 MLLM 能输出可解析答案，并不意味着这些模型都经过了机器人低层控制训练。</p>
+<h2 id="section-11">4. L4 的分数，为什么不能直接叫任务成功率？</h2>
+<p>考虑一段参考轨迹：机械臂向左移动 5 厘米，再向前移动 3 厘米。模型输出与它接近，动作对齐分数就可能较高。但环境里也许有另一条绕行路径同样成功；反过来，贴近示范的轨迹也可能因物体位置微小变化而失败。</p>
+<p><strong>参考动作相似度与闭环任务成功，回答的是两个不同问题。</strong></p>
+<p>论文对部分导航、操作任务，计算预测动作与 Ground Truth 的距离和方向一致性。其平移评分为：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi>s</mi><mi>d</mi></msub><mo>=</mo><mi>max</mi><mo>⁡</mo><mrow><mo fence="true">(</mo><mn>0</mn><mo separator="true">,</mo><mn>1</mn><mo>−</mo><mfrac><mrow><mi mathvariant="normal">∥</mi><mi mathvariant="normal">Δ</mi><msub><mi>p</mi><mrow><mi mathvariant="normal">p</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">d</mi></mrow></msub><mo>−</mo><mi mathvariant="normal">Δ</mi><msub><mi>p</mi><mrow><mi mathvariant="normal">g</mi><mi mathvariant="normal">t</mi></mrow></msub><mi mathvariant="normal">∥</mi></mrow><mrow><mi mathvariant="normal">∥</mi><mi mathvariant="normal">Δ</mi><msub><mi>p</mi><mrow><mi mathvariant="normal">g</mi><mi mathvariant="normal">t</mi></mrow></msub><mi mathvariant="normal">∥</mi></mrow></mfrac><mo fence="true">)</mo></mrow><mo separator="true">,</mo></mrow><annotation encoding="application/x-tex">
+s_d=\max\left(0,1-\frac{\|\Delta p_{\mathrm{pred}}-\Delta p_{\mathrm{gt}}\|}{\|\Delta p_{\mathrm{gt}}\|}\right),
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.5806em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal">s</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">d</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:2.4221em;vertical-align:-0.9721em;"></span><span class="mop">max</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="minner"><span class="mopen delimcenter" style="top:0em;"><span class="delimsizing size3">(</span></span><span class="mord">0</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord">1</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mord"><span class="mopen nulldelimiter"></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.427em;"><span style="top:-2.314em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord">∥Δ</span><span class="mord"><span class="mord mathnormal">p</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">gt</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span><span class="mord">∥</span></span></span><span style="top:-3.23em;"><span class="pstrut" style="height:3em;"></span><span class="frac-line" style="border-bottom-width:0.04em;"></span></span><span style="top:-3.677em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord">∥Δ</span><span class="mord"><span class="mord mathnormal">p</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">pred</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mord">Δ</span><span class="mord"><span class="mord mathnormal">p</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">gt</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span><span class="mord">∥</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.9721em;"><span></span></span></span></span></span><span class="mclose nulldelimiter"></span></span><span class="mclose delimcenter" style="top:0em;"><span class="delimsizing size3">)</span></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mpunct">,</span></span></span></span></span></eqn></section><section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi>s</mi><mi>θ</mi></msub><mo>=</mo><mfrac><mrow><mi mathvariant="normal">Δ</mi><msub><mi>p</mi><mrow><mi mathvariant="normal">p</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">d</mi></mrow></msub><mo>⋅</mo><mi mathvariant="normal">Δ</mi><msub><mi>p</mi><mrow><mi mathvariant="normal">g</mi><mi mathvariant="normal">t</mi></mrow></msub></mrow><mrow><mi mathvariant="normal">∥</mi><mi mathvariant="normal">Δ</mi><msub><mi>p</mi><mrow><mi mathvariant="normal">p</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">d</mi></mrow></msub><mi mathvariant="normal">∥</mi><mi mathvariant="normal">∥</mi><mi mathvariant="normal">Δ</mi><msub><mi>p</mi><mrow><mi mathvariant="normal">g</mi><mi mathvariant="normal">t</mi></mrow></msub><mi mathvariant="normal">∥</mi></mrow></mfrac><mo separator="true">,</mo><mspace width="2em"/><msub><mi>s</mi><mrow><mi mathvariant="normal">s</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">p</mi></mrow></msub><mo>=</mo><msub><mi>s</mi><mi>d</mi></msub><mi>max</mi><mo>⁡</mo><mo stretchy="false">(</mo><mn>0</mn><mo separator="true">,</mo><msub><mi>s</mi><mi>θ</mi></msub><mo stretchy="false">)</mo><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+s_\theta=\frac{\Delta p_{\mathrm{pred}}\cdot\Delta p_{\mathrm{gt}}}{\|\Delta p_{\mathrm{pred}}\|\|\Delta p_{\mathrm{gt}}\|},
+\qquad s_{\mathrm{step}}=s_d\max(0,s_\theta).
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.5806em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal">s</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0278em;">θ</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:2.3324em;vertical-align:-0.9721em;"></span><span class="mord"><span class="mopen nulldelimiter"></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.3603em;"><span style="top:-2.314em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord">∥Δ</span><span class="mord"><span class="mord mathnormal">p</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">pred</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span><span class="mord">∥∥Δ</span><span class="mord"><span class="mord mathnormal">p</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">gt</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span><span class="mord">∥</span></span></span><span style="top:-3.23em;"><span class="pstrut" style="height:3em;"></span><span class="frac-line" style="border-bottom-width:0.04em;"></span></span><span style="top:-3.677em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord">Δ</span><span class="mord"><span class="mord mathnormal">p</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">pred</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">⋅</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mord">Δ</span><span class="mord"><span class="mord mathnormal">p</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">gt</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.9721em;"><span></span></span></span></span></span><span class="mclose nulldelimiter"></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:2em;"></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal">s</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">step</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord"><span class="mord mathnormal">s</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">d</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mop">max</span><span class="mopen">(</span><span class="mord">0</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal">s</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0278em;">θ</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mclose">)</span><span class="mord">.</span></span></span></span></span></eqn></section><p>方向与位移量都接近参考，分数才高。旋转另用旋转矩阵之间的角度误差，夹爪开闭用分类正确性。</p>
+<p>这个度量适合检查动作几何是否合理，但真实执行还涉及碰撞、可达性、接触、反馈和路径多解。公式遇到零位移时也需要实现层明确处理规则，不能不加判断地直接照抄。</p>
+<p>此外，41 种任务的评测方式中约 70.7% 为选择题。这是<strong>任务类型的占比</strong>，不要直接写成全部测试样本的 70.7%。选择题便于自动评测，但提供候选项也会改变任务难度。</p>
+<p>真正的闭环测试至少需要：模型动作改变环境，环境返回新观测，模型再根据实际结果选择下一步。视频中的动作选择和轨迹预测有诊断价值，但不能替代这个闭环。</p>
+<h2 id="section-12">5. 作者怎么研究能力之间的关系？</h2>
+<p>先让多个 MLLM 完成各类任务，得到每个模型的能力分数向量，再计算不同能力在模型之间的 Pearson 相关性。</p>
+<p>如果擅长能力 A 的模型通常也擅长 B，A、B 的相关系数就高。结果中，L1 内部相关性相对较弱，L3、L4 的一些能力相关性更强。</p>
+<p>作者的解释是：基础技能有较强专门化，高层任务需要组合多个基础技能，因此彼此关联更强。</p>
+<p>这个解释合理，但相关性还可能来自共同因素：模型规模、通用推理能力、预训练数据、输出格式稳定性。它也不能告诉我们方向——A 提高导致 B 提高，还是两者共同受 C 影响。</p>
+<p>所以后续训练干预更关键：有意增加某类空间数据，看模型其他能力是否变化。这比单纯看相关矩阵更接近“补哪种能力有用”的问题。</p>
+<h2 id="section-13">6. SFT 实验：怎么训练，又迁移到了哪里？</h2>
+<h3 id="section-14">6.1 数据配方</h3>
+<p>作者选择 Distance、Size、Correspondence 三种 L1 能力，每类构造约 25 万条能力专用样本。</p>
+<p>距离题利用 SUNRGBD、Hypersim、Matterport3D 等数据；大小题使用带三维框标注的数据，包括 SUNRGBD、Hypersim、ARKitScenes；对应关系数据参考 VST 的方案构造。</p>
+<p>能力专用数据与通用多模态指令数据按约 <strong>1:3</strong> 混合。通用混合包含单图、多图、视频和三维任务。作者还设置仅用通用数据、token 消耗相同的 SFT baseline，用来减少“只是多训练了一些 token”的解释。</p>
+<p>SFT 可以用标准监督目标理解：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi mathvariant="script">L</mi><mrow><mi mathvariant="normal">S</mi><mi mathvariant="normal">F</mi><mi mathvariant="normal">T</mi></mrow></msub><mo>=</mo><mo>−</mo><msub><mi mathvariant="double-struck">E</mi><mrow><mo stretchy="false">(</mo><mi>x</mi><mo separator="true">,</mo><mi>y</mi><mo stretchy="false">)</mo><mo>∼</mo><mi>D</mi></mrow></msub><munder><mo>∑</mo><mi>t</mi></munder><mi>log</mi><mo>⁡</mo><msub><mi>p</mi><mi>θ</mi></msub><mo stretchy="false">(</mo><msub><mi>y</mi><mi>t</mi></msub><mo>∣</mo><mi>x</mi><mo separator="true">,</mo><msub><mi>y</mi><mrow><mo>&lt;</mo><mi>t</mi></mrow></msub><mo stretchy="false">)</mo><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+\mathcal L_{\mathrm{SFT}}=-\mathbb E_{(x,y)\sim D}\sum_t\log p_\theta(y_t\mid x,y_{&lt;t}).
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathcal">L</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3283em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">SFT</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:2.3em;vertical-align:-1.25em;"></span><span class="mord">−</span><span class="mord"><span class="mord mathbb">E</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3448em;"><span style="top:-2.5198em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mopen mtight">(</span><span class="mord mathnormal mtight">x</span><span class="mpunct mtight">,</span><span class="mord mathnormal mtight" style="margin-right:0.0359em;">y</span><span class="mclose mtight">)</span><span class="mrel mtight">∼</span><span class="mord mathnormal mtight" style="margin-right:0.0278em;">D</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.3552em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mop op-limits"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.05em;"><span style="top:-1.9em;margin-left:0em;"><span class="pstrut" style="height:3.05em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span><span style="top:-3.05em;"><span class="pstrut" style="height:3.05em;"></span><span><span class="mop op-symbol large-op">∑</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:1.25em;"><span></span></span></span></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mop">lo<span style="margin-right:0.0139em;">g</span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal">p</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0278em;">θ</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0359em;">y</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:-0.0359em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">∣</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal">x</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0359em;">y</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:-0.0359em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mrel mtight">&lt;</span><span class="mord mathnormal mtight">t</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.1774em;"><span></span></span></span></span></span></span><span class="mclose">)</span><span class="mord">.</span></span></span></span></span></eqn></section><p>这里 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>x</mi></mrow><annotation encoding="application/x-tex">x</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.4306em;"></span><span class="mord mathnormal">x</span></span></span></span></eq> 是视觉输入和问题，<eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>y</mi></mrow><annotation encoding="application/x-tex">y</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.625em;vertical-align:-0.1944em;"></span><span class="mord mathnormal" style="margin-right:0.0359em;">y</span></span></span></span></eq> 是目标回答。这个公式解释训练形式；论文主要改变的是能力数据组合，不是提出一种新的 SFT 损失。</p>
+<h3 id="section-15">6.2 单能力训练：局部进步不等于整体变强</h3>
+<table>
+<thead>
+<tr>
+<th>SFT 配方</th>
+<th style="text-align:right">总分</th>
+<th style="text-align:right">相对通用 SFT baseline</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>通用 baseline</td>
+<td style="text-align:right">25.0</td>
+<td style="text-align:right">—</td>
+</tr>
+<tr>
+<td>加 Distance</td>
+<td style="text-align:right">24.5</td>
+<td style="text-align:right">−0.5</td>
+</tr>
+<tr>
+<td>加 Correspondence</td>
+<td style="text-align:right">25.2</td>
+<td style="text-align:right">+0.2</td>
+</tr>
+<tr>
+<td>加 Size</td>
+<td style="text-align:right">23.5</td>
+<td style="text-align:right">−1.5</td>
+</tr>
+<tr>
+<td>Distance + Size + Correspondence</td>
+<td style="text-align:right">26.1</td>
+<td style="text-align:right">+1.1</td>
+</tr>
+<tr>
+<td>再加入 Motion</td>
+<td style="text-align:right">27.3</td>
+<td style="text-align:right">+2.3</td>
+</tr>
+</tbody>
+</table>
+<p>来源：论文 Table 2。这里是加权 benchmark 分数，变化用“分”表达，不等于所有任务的成功率变化。</p>
+<p>Distance 训练后，Geometry 从 20.9 到 24.1，但 Relation 从 28.9 到 23.2，Localization 从 24.2 到 19.6；与此同时，Goal-driven Execution 从 22.1 到 25.5。</p>
+<p>也就是说，总分略降，某些高层分支却变好。仅看总分会漏掉迁移效果，仅挑一个上涨分支又会漏掉能力退化。</p>
+<p>Correspondence 也有类似现象：其所属 Relation 分支只有小幅上涨，Open-World Exploration 从 26.5 到 35.9，增加 9.4 分。但其他分支并未同步改善。</p>
+<p>这说明在当前配方下，训练收益有明显方向性。可能涉及表征变化、优化干扰和数据分布差异。实验本身没有证明“基础技能天然互斥”，也没有定位具体是哪一层参数造成干扰。</p>
+<h3 id="section-16">6.3 联合训练：有协同，但不是每个能力都受益</h3>
+<p>三能力联合总分 26.1，比任意单能力配方都高；加入 Motion 后达到 27.3。这支持多类基础监督具有互补性。</p>
+<p>直观上，规划物体如何移动往往同时需要位置、尺寸和跨视角对应。只改善其中一项，其他瓶颈还在；联合训练可能缓解多个瓶颈，也可能减轻偏向单一数据分布造成的退化。</p>
+<p>但三能力联合模型的 Localization 仍只有 16.4，低于 baseline 的 24.2。加入 Motion 后，Motion 分支本身也没有简单地超过 baseline。训练集名字与最终能力变化不是一一对应关系。</p>
+<p>因此论文给出的是“值得研究多能力组合”的证据。若要严格证明某种组合产生因果协同，还需要更完整的等预算组合消融、数据配比控制、重复训练和误差范围。</p>
+<h2 id="section-17">7. RL 实验：为什么要有 Auto-Think？</h2>
+<h3 id="section-18">7.1 这里的 RL 在优化什么？</h3>
+<p>作者使用 Qwen2.5-VL-7B 和 GRPO，研究 Reinforcement Learning with Verifiable Rewards。训练奖励主要围绕离散选择题答案的正确性，测试则包含数值、语义和动作相关度量。</p>
+<p>因此它是在训练多模态模型的回答策略，不能直接理解成机器人在物理环境里靠成功奖励练操作。</p>
+<p>GRPO 的基本过程是：同一个问题采样一组回答，给各回答评分，再鼓励奖励相对更高的回答。组内优势可用下面的简化式帮助理解：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mover accent="true"><mi>A</mi><mo>^</mo></mover><mi>i</mi></msub><mo>=</mo><mfrac><mrow><msub><mi>r</mi><mi>i</mi></msub><mo>−</mo><mover accent="true"><mi>r</mi><mo>ˉ</mo></mover></mrow><mrow><mi mathvariant="normal">std</mi><mo>⁡</mo><mo stretchy="false">(</mo><mi>r</mi><mo stretchy="false">)</mo><mo>+</mo><mi>ϵ</mi></mrow></mfrac><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+\hat A_i=\frac{r_i-\bar r}{\operatorname{std}(r)+\epsilon}.
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:1.0968em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord katex-accent"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.9468em;"><span style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span class="mord mathnormal">A</span></span><span style="top:-3.2523em;"><span class="pstrut" style="height:3em;"></span><span class="accent-body" style="left:-0.1111em;"><span class="mord">^</span></span></span></span></span></span></span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:2.1963em;vertical-align:-0.936em;"></span><span class="mord"><span class="mopen nulldelimiter"></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.2603em;"><span style="top:-2.314em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mop"><span class="mord mathrm">std</span></span><span class="mopen">(</span><span class="mord mathnormal" style="margin-right:0.0278em;">r</span><span class="mclose">)</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mord mathnormal">ϵ</span></span></span><span style="top:-3.23em;"><span class="pstrut" style="height:3em;"></span><span class="frac-line" style="border-bottom-width:0.04em;"></span></span><span style="top:-3.677em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord"><span class="mord mathnormal" style="margin-right:0.0278em;">r</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:-0.0278em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mord katex-accent"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.5678em;"><span style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span class="mord mathnormal" style="margin-right:0.0278em;">r</span></span><span style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span class="accent-body" style="left:-0.1944em;"><span class="mord">ˉ</span></span></span></span></span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.936em;"><span></span></span></span></span></span><span class="mclose nulldelimiter"></span></span><span class="mord">.</span></span></span></span></span></eqn></section><p>这是通用机制示意，不包含完整的概率比率裁剪、KL 约束等实现细节。论文没有充分给出全部超参数和奖励系数，因此不能凭这一式子完整复现。</p>
+<h3 id="section-19">7.2 为什么“多思考”可能损害感知？</h3>
+<p>直接估计深度，需要可靠的视觉几何线索。长文本推理可能帮助利用已知尺度，也可能引入类别刻板印象和未经观察支持的假设。输出更长，本身不会增加输入图像的信息。</p>
+<p>而规划需要保持多个中间状态、比较操作顺序和检查约束，显式推演更可能有帮助。</p>
+<p>论文据此设计不同层级的奖励方式：对直接感知任务，减少对思考过程的鼓励并加入长度惩罚；对复杂推理与规划，保留对推演的鼓励。这就是 Auto-Think 的主要思路。</p>
+<p>它发生在训练目标中。不能只把它理解成部署时给某些题打开 Thinking 开关，也不能认为模型里因此多出了两个独立的快慢网络。</p>
+<p>这一机制仍有重要的复现问题：长度究竟统计什么、系数多大、推理相关奖励如何计算、哪些任务使用哪种奖励。论文的高层描述不足以唯一确定这些配置。</p>
+<h3 id="section-20">7.3 看增益时，要用正确的 baseline</h3>
+<table>
+<thead>
+<tr>
+<th>配方</th>
+<th style="text-align:right">总分</th>
+<th style="text-align:right">相对同一 SFT 起点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SFT Baseline</td>
+<td style="text-align:right">27.3</td>
+<td style="text-align:right">—</td>
+</tr>
+<tr>
+<td>L1 RL @think</td>
+<td style="text-align:right">26.6</td>
+<td style="text-align:right">−0.7</td>
+</tr>
+<tr>
+<td>L3 RL @think</td>
+<td style="text-align:right">27.7</td>
+<td style="text-align:right">+0.4</td>
+</tr>
+<tr>
+<td>L4 RL @think</td>
+<td style="text-align:right">28.5</td>
+<td style="text-align:right">+1.2</td>
+</tr>
+<tr>
+<td>Full RL @think</td>
+<td style="text-align:right">30.1</td>
+<td style="text-align:right">+2.8</td>
+</tr>
+<tr>
+<td>Full RL @auto-think</td>
+<td style="text-align:right">30.8</td>
+<td style="text-align:right">+3.5</td>
+</tr>
+</tbody>
+</table>
+<p>这里按 Table 3 显示的一位小数原始分数重算差值。原表括号把最后两项写作 +2.9、+3.6，与显示值相减不一致；附件沿用了括号值。笔记不把这 0.1 分差异包装成额外增益。</p>
+<p>最直接的 Auto-Think 对照是 <strong>30.8 对 30.1，增加 0.7 分</strong>。它不是在普通 Full RL 之外再提高 3.6 分。</p>
+<p>同时比较各分支：</p>
+<table>
+<thead>
+<tr>
+<th>能力</th>
+<th style="text-align:right">Full RL @think</th>
+<th style="text-align:right">Full RL @auto-think</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Geometry</td>
+<td style="text-align:right">29.7</td>
+<td style="text-align:right">31.9</td>
+</tr>
+<tr>
+<td>Motion</td>
+<td style="text-align:right">24.7</td>
+<td style="text-align:right">28.6</td>
+</tr>
+<tr>
+<td>Relation</td>
+<td style="text-align:right">27.2</td>
+<td style="text-align:right">22.0</td>
+</tr>
+<tr>
+<td>Memory</td>
+<td style="text-align:right">16.7</td>
+<td style="text-align:right">22.6</td>
+</tr>
+<tr>
+<td>Sequential Planning</td>
+<td style="text-align:right">37.6</td>
+<td style="text-align:right">35.6</td>
+</tr>
+<tr>
+<td>Goal-driven Execution</td>
+<td style="text-align:right">25.4</td>
+<td style="text-align:right">23.4</td>
+</tr>
+<tr>
+<td>Open-World Exploration</td>
+<td style="text-align:right">41.7</td>
+<td style="text-align:right">44.1</td>
+</tr>
+</tbody>
+</table>
+<p>Auto-Think 在多个分支改善，另一些分支下降。结果更支持“奖励与计算方式应匹配任务”，而不是“Auto-Think 让每项能力都变好”。</p>
+<p>还应区分两个 SFT baseline：Table 2 的通用数据 baseline 是 25.0；Table 3 进入 RL 的多能力 SFT 起点是 27.3。把它们混成一个，会高估或误解 RL 的贡献。</p>
+<h2 id="section-21">8. 这棵“树”到底被证明到了什么程度？</h2>
+<p>可以把证据分成三层理解。</p>
+<p><strong>分类层：</strong> 作者把分散的空间任务组织进四层体系。这提供了讨论和测量的共同语言，是明确的贡献。</p>
+<p><strong>实验层：</strong> 不同模型的能力分数具有相关结构；定向 SFT 和 RL 会在其他能力上产生正负变化。这说明能力之间的训练迁移值得系统研究。</p>
+<p><strong>机制层：</strong> 高层智能究竟必须依赖哪些低层表征、迁移通过哪些网络结构发生、是否存在唯一学习顺序，论文还没有严格确定。</p>
+<p>尤其是 benchmark 总分本身经过层级加权。它反映作者对能力重要性的设计选择，不是一个天然存在的统一空间智商。研究机器人时，如果定位是核心瓶颈，就应单独看定位指标，不能让其他题的高分抵消实际控制中的关键失败。</p>
+<p>此外，数据来自已有 benchmark、专家伪标签和自动改写，仍需注意数据来源交叉、标注误差与题目模板。作者声明训练和测试场景及物体配置分离，这是一项重要控制，但不能替代对原始数据来源和通用预训练污染的完整审计。</p>
+<h2 id="section-22">9. 和 RynnBrain 1.1 放在一起看</h2>
+<p><a href="RynnBrain-1.1.html">RynnBrain 1.1</a> 关注的是：通过空间和操作监督获得更好的具身基座，再用动作训练检验其价值。</p>
+<p>SpatialTree 则提供另一侧的问题：加入这些监督后，究竟改善了哪些能力，又损害了哪些能力？</p>
+<p>二者可以形成一个实验思路：</p>
+<pre><code class="language-text">改变具身预训练的数据组合
+    ↓
+分别测定位、对应关系、空间记忆、规划等能力
+    ↓
+固定动作训练或 Agent 执行系统
+    ↓
+测真实任务成功率与具体失败原因
+</code></pre>
+<p>这一流程能把“空间能力上涨”和“机器人变好”连接起来。只做中间的问答评测，无法证明执行收益；只做最后的成功率，又很难解释哪种监督起作用。</p>
+<p>例如，若增加跨视角对应训练后，目标重识别变好、遮挡后恢复任务也变好，而静态抓取基本不变，这会比单纯报告总分提升更能支持机制解释。这个例子是研究假设，不是 SpatialTree 已完成的实验。</p>
+<h2 id="section-23">10. 对 RUA / Dex-RUA，我会怎么借鉴？</h2>
+<h3 id="section-24">用它整理失败类型</h3>
+<table>
+<thead>
+<tr>
+<th>执行现象</th>
+<th>值得检查的能力</th>
+<th>还需排除的执行因素</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>末端总是落在目标后面</td>
+<td>深度、坐标系、定位</td>
+<td>标定误差与动作映射</td>
+</tr>
+<tr>
+<td>转动视角后换错目标</td>
+<td>对应关系、空间记忆</td>
+<td>目标检测漏检</td>
+</tr>
+<tr>
+<td>能找到目标但顺序错误</td>
+<td>任务状态理解、序列规划</td>
+<td>工具接口限制</td>
+</tr>
+<tr>
+<td>抓住后滑落</td>
+<td>抓取与接触表征</td>
+<td>摩擦、力、控制频率</td>
+</tr>
+<tr>
+<td>失败后反复执行同一动作</td>
+<td>状态更新、诊断与重规划</td>
+<td>反馈是否可观察</td>
+</tr>
+</tbody>
+</table>
+<p>这些是诊断方向，不是从一次失败就确定原因的标签。比如抓空可能来自视觉，也可能来自控制标定，需要执行证据区分。</p>
+<h3 id="section-25">把能力干预做成受控实验</h3>
+<p>固定模型架构、机器人任务、执行接口和训练预算，只改变深度、对应、姿态或接触监督，再同时记录能力题和闭环表现。这样才有机会知道哪些数据真正值得采集。</p>
+<p>如果评测中额外给模型深度图、对应点或物体坐标，应单独标明它是额外信息条件。训练中学会提取几何，与测试时直接获得几何提示，是两种不同的能力来源。</p>
+<h3 id="section-26">动态分配推理预算值得研究，但需要另外验证</h3>
+<p>Auto-Think 的启发是让计算投入匹配任务。机器人可以在简单状态更新时快速响应，在遮挡、接触异常或任务失败时增加诊断与规划计算。</p>
+<p>但空间层级只是一个粗分类。简单任务也可能因为观测模糊而需要主动观察，复杂任务也可能已形成稳定技能。真正的在线预算策略可能还要考虑不确定性、时延和失败风险。</p>
+<p>因此后续实验应同时记录成功率、推理 token、端到端响应时间和动作中断次数。只看到回答更短，不能证明控制更好。</p>
+<h2 id="section-27">11. 读完最值得留下的判断</h2>
+<p>SpatialTree 提供了一种有用的研究方式：把空间能力拆开测，再通过训练干预观察它们如何组合和迁移。</p>
+<p>它提醒我们，数据量、思考长度和总体分数都不足以单独说明进步。Distance 训练可能帮助行动题，却损害其他感知题；联合训练可以提高总分，却保留明显短板；Auto-Think 的整体收益也伴随分支间取舍。</p>
+<p>对于具身研究，我会把它用于选择训练数据、设计能力消融和整理失败原因，并用真实闭环执行检验这些能力是否有用。最终需要回答的仍是：模型增加了哪些可靠的空间信息，这些信息是否改变了正确行动的概率。</p>
+<h2 id="section-28">原文定位与核对说明</h2>
+<ul>
+<li><a href="https://arxiv.org/html/2512.20617v2">论文 §3–4</a>：四层分类、数据构建与评测方式。</li>
+<li><a href="https://arxiv.org/html/2512.20617v2">论文 §6 / Table 2、3</a>：能力定向 SFT、GRPO 与 Auto-Think 对照。</li>
+<li><a href="https://arxiv.org/html/2512.20617v2">论文附录 C–E</a>：动作映射、参考动作评分、提示干预和层级加权。</li>
+<li><a href="https://spatialtree.github.io/">项目主页</a>：能力说明、数据例子和结果展示。</li>
+</ul>
+<footer><a href="../index.html#blog">← Back to Blog</a></footer></article></main></body></html>

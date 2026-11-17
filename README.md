@@ -11,7 +11,7 @@ The site uses a single HTML entry point and hash-addressable views:
 - `#research` — publication-style research and system entries;
 - `#blog` — categorized writing archive;
 - `#blog/<slug>` — individual article view;
-- `#blog` also contains all 83 searchable research notes; old `#notes` links redirect here.
+- `#blog` contains 123 searchable research notes, newest first, with complete Markdown downloads; old `#notes` links redirect here.
 
 ## Local preview
 

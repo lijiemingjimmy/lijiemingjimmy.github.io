@@ -1,0 +1,272 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AHa-3D：用几何工具和验证反馈，把室内视频变成可编辑场景 · Jieming Li</title><link rel="stylesheet" href="../assets/styles.css"><link rel="stylesheet" href="../assets/notes.css"><link rel="stylesheet" href="vendor/katex/katex.min.css"></head><body class="note-page"><header class="note-nav"><a href="../index.html#blog">← Blog</a><a href="../index.html">Jieming Li</a></header><main class="note-layout"><aside class="note-outline"><p class="eyebrow">On this page</p><nav aria-label="目录"><ol><li><a href="#section-0">1. 为什么得到一个三维重建还不够？</a></li><li><a href="#section-1">2. 五阶段流程：Agent 负责哪些工作？</a></li><li><a href="#section-2">3. Observe：从二维视频建立共同的几何参考</a></li><li><a href="#section-6">4. Build：把几何证据变成独立对象</a></li><li><a href="#section-7">5. Verify：X-Ray 为什么比并排看两张图更有效？</a></li><li><a href="#section-8">6. Bullet 检查能验证到什么程度？</a></li><li><a href="#section-9">7. 人体运动：估计身体与对齐房间是两个问题</a></li><li><a href="#section-10">8. G1 动作：运动生成到真实控制还差哪些环节？</a></li><li><a href="#section-11">9. MiniMax 在哪里起作用？</a></li><li><a href="#section-12">10. 它到底“学”了什么？</a></li><li><a href="#section-13">11. 对照实验说明了什么？</a></li><li><a href="#section-15">12. 当前开源版本增加了哪些工程约束？</a></li><li><a href="#section-16">13. 与 RoboSimStudio、GaP 放在一起怎样理解？</a></li><li><a href="#section-17">14. 对 RUA / Dex-RUA 的价值</a></li><li><a href="#section-18">15. 如何开始复现？</a></li></ol></nav></aside><article class="note-content" id="content"><p class="eyebrow">Research notebook · 研究笔记</p><h1 id="noteTitle">AHa-3D：用几何工具和验证反馈，把室内视频变成可编辑场景</h1>
+<p>项目：<strong>AHa-3D: Agentic Tool Use for Real2Sim with GPT-6 Astra</strong>。作者为 Congrong Xu、Siyuan Bian、Jiawei Wang、Haowei Sun 和 Jun Gao。官方引用将其列为 2026 年 9 月的项目博客；本文按博客与开源系统解读，不将其写成已发表的同行评审论文。</p>
+<p><a href="https://kevinxu02.github.io/real2sim-indoor-site/">项目主页</a> · <a href="https://github.com/KevinXu02/aha-3d">代码</a> · <a href="https://github.com/KevinXu02/aha-3d/blob/main/docs/GETTING_STARTED.md">入门示例</a> · <a href="https://github.com/KevinXu02/aha-3d/blob/main/docs/REAL2SIM_PIPELINE.md">完整流程</a></p>
+<p>AHa-3D 的核心是让 Coding Agent 调用专业几何、图形和运动工具，把室内 RGB 视频变成有独立对象、可以继续修改的 Blender 场景。Agent 负责组织任务、编写场景脚本、解释检查结果和修改对象；深度、相机和人体姿态等估计主要交给专门模型。</p>
+<p>它值得研究的部分是<strong>测量—构建—验证—修复的循环</strong>。一个 Agent 可以写出很像房间的 Blender 程序，但如果没有原视频相机、三维测量和对象级检查，就很难确定桌子究竟是太高、放错位置，还是被错误视角遮住了。</p>
+<p>与刚读过的 <a href="RoboSimStudio.html">RoboSimStudio</a> 相比，AHa-3D 更侧重室内场景的几何、对象结构及运动对齐。与 <a href="GaP.html">GaP</a> 相比，它主要开发的是场景资产，而非可反复执行的机器人控制程序。</p>
+<h2 id="section-0">1. 为什么得到一个三维重建还不够？</h2>
+<p>假设手机拍摄了一个客厅，视频中有沙发、柜子、桌子以及走动的人。点云、表面网格或 3D Gaussian Splatting 可以表达可见外观，但机器人使用环境时还需要更多信息：哪个网格属于柜门，门绕哪里转，桌子由什么支撑，哪些对象能够移动，以及机器人能否碰到它们。</p>
+<p>因此，至少要区分三个层次：</p>
+<table>
+<thead>
+<tr>
+<th>层次</th>
+<th>能做什么</th>
+<th>尚不能自动保证什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>视觉重建</td>
+<td>从不同视角显示房间</td>
+<td>对象可独立操作、物理属性正确</td>
+</tr>
+<tr>
+<td>可编辑对象场景</td>
+<td>修改家具尺寸、位置、材质及开合结构</td>
+<td>精确接触动力学、控制可执行性</td>
+</tr>
+<tr>
+<td>机器人训练环境</td>
+<td>接收动作、推进物理、提供观察与任务判定</td>
+<td>真实迁移仍需额外验证</td>
+</tr>
+</tbody>
+</table>
+<p>AHa-3D 的主要产物处于第二层，并加入基础碰撞、支撑检查和交互展示。项目也使用“simulatable environments”描述目标，但是否满足第三层，需要检查实际导出接口、动力学配置和任务验证。</p>
+<p>例如一个柜门可以在浏览器里按按钮打开。这证明它是可独立控制的部件，却不必然证明真实机械臂能够施加合适的力把门打开。动画开合、带关节的刚体仿真、闭环机器人操作，是不同证据。</p>
+<h2 id="section-1">2. 五阶段流程：Agent 负责哪些工作？</h2>
+<p>项目将流程分为 Observe、Build、Verify、Interact、Deliver。</p>
+<figure class="diagram"><pre class="mermaid">flowchart TD
+    A[真实室内 RGB 视频] --&gt; B[Observe：相机 深度 分割与参考几何]
+    B --&gt; C[Build：编写 Blender 场景与独立对象]
+    C --&gt; D[Verify：源视角叠加 碰撞与支撑检查]
+    D --&gt;|发现问题| C
+    D --&gt;|按请求继续| E[Interact：对象控制 人体或机器人运动]
+    E --&gt; F[接触与场景对齐检查]
+    F --&gt;|修改轨迹或对象| E
+    F --&gt; G[Deliver：可编辑场景 渲染与交互展示]
+</pre><details><summary>Diagram source</summary><pre>flowchart TD
+    A[真实室内 RGB 视频] --&gt; B[Observe：相机 深度 分割与参考几何]
+    B --&gt; C[Build：编写 Blender 场景与独立对象]
+    C --&gt; D[Verify：源视角叠加 碰撞与支撑检查]
+    D --&gt;|发现问题| C
+    D --&gt;|按请求继续| E[Interact：对象控制 人体或机器人运动]
+    E --&gt; F[接触与场景对齐检查]
+    F --&gt;|修改轨迹或对象| E
+    F --&gt; G[Deliver：可编辑场景 渲染与交互展示]
+</pre></details></figure><p>这是概念流程，不意味着每个视频都必须生成人体和 G1 动作。静态房间、源视频人物恢复、新动作生成对应不同任务范围。</p>
+<p>Agent 在其中承担四类工作：决定调用哪些工具，组织中间结果和坐标系，写场景代码，以及基于证据修复问题。Pi3X、SAM3、Blender、运动模型等则完成各自擅长的计算。</p>
+<p>这种分工的好处是，Agent 可以把“我认为桌子应该放这里”变成可以检查的程序。局限也很直接：上游相机、深度和分割错误会进入后续环节；工具返回数值不等于数值可靠。</p>
+<p>官方文档明确说明，完整流程不是所有阶段由一个命令无条件自动完成。Agent 仍需要审查源视频、几何与视觉质量。<a href="https://github.com/KevinXu02/aha-3d/blob/main/docs/REAL2SIM_PIPELINE.md">当前流程说明</a></p>
+<h2 id="section-2">3. Observe：从二维视频建立共同的几何参考</h2>
+<h3 id="section-3">3.1 Pi3X 提供相机与近似三维结构</h3>
+<p>要比较真实图像和生成场景，必须先知道相机大致在哪里、朝向哪里。否则，同一张桌子在不同视角下可能看起来大小不同，Agent 很容易把视角问题误判为几何问题。</p>
+<p>Pi3X 从视频帧估计相机轨迹及三维几何，使 Blender 能从与原视频对应的视角渲染。</p>
+<p>以下公式用于解释几何关系，不是项目另行提出的算法。若深度 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>d</mi></mrow><annotation encoding="application/x-tex">d</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6944em;"></span><span class="mord mathnormal">d</span></span></span></span></eq> 表示相机 Z 方向深度，像素坐标为 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false">(</mo><mi>u</mi><mo separator="true">,</mo><mi>v</mi><mo stretchy="false">)</mo></mrow><annotation encoding="application/x-tex">(u,v)</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mopen">(</span><span class="mord mathnormal">u</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal" style="margin-right:0.0359em;">v</span><span class="mclose">)</span></span></span></span></eq>，内参为 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>K</mi></mrow><annotation encoding="application/x-tex">K</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord mathnormal" style="margin-right:0.0715em;">K</span></span></span></span></eq>，则：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi mathvariant="bold">p</mi><mi>c</mi></msub><mo>=</mo><mi>d</mi><msup><mi>K</mi><mrow><mo>−</mo><mn>1</mn></mrow></msup><mo stretchy="false">[</mo><mi>u</mi><mo separator="true">,</mo><mi>v</mi><mo separator="true">,</mo><mn>1</mn><msup><mo stretchy="false">]</mo><mi mathvariant="normal">⊤</mi></msup><mo separator="true">,</mo><mspace width="2em"/><msub><mi mathvariant="bold">p</mi><mi>w</mi></msub><mo>=</mo><msub><mi>R</mi><mrow><mi>w</mi><mi>c</mi></mrow></msub><msub><mi mathvariant="bold">p</mi><mi>c</mi></msub><mo>+</mo><msub><mi mathvariant="bold">t</mi><mrow><mi>w</mi><mi>c</mi></mrow></msub><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+\mathbf p_c=dK^{-1}[u,v,1]^\top,
+\qquad
+\mathbf p_w=R_{wc}\mathbf p_c+\mathbf t_{wc}.
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6389em;vertical-align:-0.1944em;"></span><span class="mord"><span class="mord mathbf">p</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">c</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1.1491em;vertical-align:-0.25em;"></span><span class="mord mathnormal">d</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0715em;">K</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8641em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight">−</span><span class="mord mtight">1</span></span></span></span></span></span></span></span></span><span class="mopen">[</span><span class="mord mathnormal">u</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal" style="margin-right:0.0359em;">v</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord">1</span><span class="mclose"><span class="mclose">]</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8991em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">⊤</span></span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:2em;"></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathbf">p</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0269em;">w</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.8778em;vertical-align:-0.1944em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0077em;">R</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:-0.0077em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right:0.0269em;">w</span><span class="mord mathnormal mtight">c</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mord"><span class="mord mathbf">p</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">c</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.7849em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathbf">t</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right:0.0269em;">w</span><span class="mord mathnormal mtight">c</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mord">.</span></span></span></span></span></eqn></section><p>这把图像位置映射到共同坐标系中的三维点。Agent 选择物体顶部和底部，就能根据对应几何估计距离；项目展示了约 0.50 m 的台灯测量。</p>
+<p>但这仍是<strong>视频推断的尺度估计</strong>。单目视频存在尺度歧义，模型的米制先验不能替代真实测量。当前文档明确要求记录尺度假设和不确定性，不能把输出当作几何真值。<a href="https://github.com/KevinXu02/aha-3d/blob/main/docs/PI3X_GEOMETRY_REFERENCE.md">Pi3X 参考说明</a></p>
+<p>这一点在机器人任务中很重要。房间整体相似不代表把手位置、桌面高度和通行间隙已经达到操作所需精度。</p>
+<h3 id="section-4">3.2 SAM3 把语义信息用于几何筛选</h3>
+<p>视频里的人在移动，墙面与地板基本静止。如果把人物对应的深度直接融合进房间，就可能留下不存在的静态表面。</p>
+<p>SAM3 用于识别人物、墙面、地板等区域。人物区域需要从静态结构融合中排除，地板和墙面则可用于确定结构方向。</p>
+<p>分割解决的是哪些观测属于什么区域，不会直接生成一个完整、可交互的柜子。玻璃、镜面、遮挡和错误掩码也仍然会影响重建。</p>
+<h3 id="section-5">3.3 TSDF 融合参考表面</h3>
+<p>TSDF，即截断符号距离函数，用局部空间点到表面的带符号距离描述几何。多个视角的深度观测可以融合，再从零等值面提取表面。</p>
+<p>一个通用表达是：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mi mathvariant="normal">Φ</mi><mo stretchy="false">(</mo><mi mathvariant="bold">x</mi><mo stretchy="false">)</mo><mo>=</mo><mfrac><mrow><munder><mo>∑</mo><mi>t</mi></munder><msub><mi>w</mi><mi>t</mi></msub><mo stretchy="false">(</mo><mi mathvariant="bold">x</mi><mo stretchy="false">)</mo><msub><mi>ϕ</mi><mi>t</mi></msub><mo stretchy="false">(</mo><mi mathvariant="bold">x</mi><mo stretchy="false">)</mo></mrow><mrow><munder><mo>∑</mo><mi>t</mi></munder><msub><mi>w</mi><mi>t</mi></msub><mo stretchy="false">(</mo><mi mathvariant="bold">x</mi><mo stretchy="false">)</mo></mrow></mfrac><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+\Phi(\mathbf x)=
+\frac{\sum_t w_t(\mathbf x)\phi_t(\mathbf x)}
+{\sum_t w_t(\mathbf x)}.
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord">Φ</span><span class="mopen">(</span><span class="mord mathbf">x</span><span class="mclose">)</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:2.4254em;vertical-align:-0.9857em;"></span><span class="mord"><span class="mopen nulldelimiter"></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.4397em;"><span style="top:-2.314em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mop"><span class="mop op-symbol small-op" style="position:relative;top:0em;">∑</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1308em;"><span style="top:-2.4003em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2997em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0269em;">w</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:-0.0269em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mopen">(</span><span class="mord mathbf">x</span><span class="mclose">)</span></span></span><span style="top:-3.23em;"><span class="pstrut" style="height:3em;"></span><span class="frac-line" style="border-bottom-width:0.04em;"></span></span><span style="top:-3.6897em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mop"><span class="mop op-symbol small-op" style="position:relative;top:0em;">∑</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1308em;"><span style="top:-2.4003em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2997em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0269em;">w</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:-0.0269em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mopen">(</span><span class="mord mathbf">x</span><span class="mclose">)</span><span class="mord"><span class="mord mathnormal">ϕ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mopen">(</span><span class="mord mathbf">x</span><span class="mclose">)</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.9857em;"><span></span></span></span></span></span><span class="mclose nulldelimiter"></span></span><span class="mord">.</span></span></span></span></span></eqn></section><p>这里的权重公式是背景解释。<strong>当前 AHa-3D 文档注明，对通过筛选的观测使用等权融合，不是按经过标定的置信概率加权。</strong> 置信度主要参与筛选，不能把“模型分数高”直接解释为物理测量误差已知。</p>
+<p>融合后再利用地板和墙面建立共同方向与地面参考。最终得到的是相机、参考表面和可测量的结构信息，尚不是最终的对象化房间。<a href="https://github.com/KevinXu02/aha-3d/blob/main/docs/PI3X_GEOMETRY_REFERENCE.md">几何筛选与融合实现</a></p>
+<p>需要注意，多帧融合通常有助于减少局部噪声，但如果多个深度或相机估计存在一致偏差，融合不会自动消除这种系统性误差。</p>
+<h2 id="section-6">4. Build：把几何证据变成独立对象</h2>
+<p>AHa-3D 不直接把融合网格当作最终世界，而是让 Agent 在 Blender 中创建房间、家具和物体。RoomKit 提供可复用对象、参数化构造与材质等能力。</p>
+<p>以柜子为例，场景可以包含柜体、隔板、门和抽屉。Agent 可以改变宽度，调整隔板数量，修改朝向，或者替换材质。修改一个对象时，不需要重新生成整间房。</p>
+<p>可以用下面的抽象理解对象表示：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi mathvariant="script">O</mi><mi>i</mi></msub><mo>=</mo><mo stretchy="false">(</mo><msub><mi>G</mi><mi>i</mi></msub><mo separator="true">,</mo><msub><mi>T</mi><mi>i</mi></msub><mo separator="true">,</mo><msub><mi>M</mi><mi>i</mi></msub><mo separator="true">,</mo><msub><mi>A</mi><mi>i</mi></msub><mo stretchy="false">)</mo><mo separator="true">,</mo></mrow><annotation encoding="application/x-tex">
+\mathcal O_i=(G_i,T_i,M_i,A_i),
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathcal" style="margin-right:0.0278em;">O</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:-0.0278em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal">G</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1389em;">T</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:-0.1389em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.109em;">M</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:-0.109em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal">A</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mclose">)</span><span class="mpunct">,</span></span></span></span></span></eqn></section><p>其中 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>G</mi><mi>i</mi></msub></mrow><annotation encoding="application/x-tex">G_i</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal">G</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span></eq> 为几何，<eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>T</mi><mi>i</mi></msub></mrow><annotation encoding="application/x-tex">T_i</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1389em;">T</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:-0.1389em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span></eq> 为位姿，<eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>M</mi><mi>i</mi></msub></mrow><annotation encoding="application/x-tex">M_i</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.109em;">M</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:-0.109em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span></eq> 为材质，<eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>A</mi><mi>i</mi></msub></mrow><annotation encoding="application/x-tex">A_i</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal">A</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span></eq> 为可操作结构。这个表达用于说明对象化的价值，不是项目强制使用的唯一数据结构。</p>
+<p>这里存在一种明确的取舍：显式对象更容易编辑和添加交互，但资产近似可能丢失真实物体的细节。对于视频没拍到的背面，Agent 可以依据同类家具补全，却必须把补全部分与实际观测区分。</p>
+<p>一个常见问题是，Agent 选了“看起来像”的家具资产，但扶手、柜门方向或支撑位置不同。渲染仍可能很好看，后续人体坐姿或机器人接触就会错。因此，接触敏感的对象需要先检查结构，再接入动作。</p>
+<h2 id="section-7">5. Verify：X-Ray 为什么比并排看两张图更有效？</h2>
+<p>并排比较视频和渲染时，视角、纹理和遮挡可能掩盖几何误差。X-Ray 将生成对象的轮廓投影到原视频帧上，使边界差异更直接。</p>
+<p>对三维点 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi mathvariant="bold">X</mi></mrow><annotation encoding="application/x-tex">\mathbf X</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6861em;"></span><span class="mord mathbf">X</span></span></span></span></eq>，投影可以抽象为：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mover accent="true"><mi mathvariant="bold">u</mi><mo>^</mo></mover><mo>=</mo><mi>π</mi><mo stretchy="false">(</mo><mi>K</mi><msub><mi>T</mi><mrow><mi>c</mi><mi>w</mi></mrow></msub><mi mathvariant="bold">X</mi><mo stretchy="false">)</mo><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+\hat{\mathbf u}=\pi(KT_{cw}\mathbf X).
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.7079em;"></span><span class="mord katex-accent"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.7079em;"><span style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span class="mord mathbf">u</span></span><span style="top:-3.0134em;"><span class="pstrut" style="height:3em;"></span><span class="accent-body" style="left:-0.25em;"><span class="mord">^</span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal" style="margin-right:0.0359em;">π</span><span class="mopen">(</span><span class="mord mathnormal" style="margin-right:0.0715em;">K</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1389em;">T</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:-0.1389em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">c</span><span class="mord mathnormal mtight" style="margin-right:0.0269em;">w</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mord mathbf">X</span><span class="mclose">)</span><span class="mord">.</span></span></span></span></span></eqn></section><p>这里 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>T</mi><mrow><mi>c</mi><mi>w</mi></mrow></msub></mrow><annotation encoding="application/x-tex">T_{cw}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1389em;">T</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:-0.1389em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">c</span><span class="mord mathnormal mtight" style="margin-right:0.0269em;">w</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span></eq> 把世界坐标转成相机坐标，<eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>π</mi></mrow><annotation encoding="application/x-tex">\pi</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.4306em;"></span><span class="mord mathnormal" style="margin-right:0.0359em;">π</span></span></span></span></eq> 包含透视除法。项目用估计相机进行这种源视角检查。</p>
+<p>假设桌面轮廓比真实桌面高，可能有几种解释：桌腿太长、整个桌子抬高了、桌子深度放错了，或相机估计存在偏差。Agent 需要结合另一个视角或测量结果决定修改，而不是只让某一张图重合。</p>
+<p>项目展示了内嵌柜修复，通过原相机射线和柜体正面平面调整隔板数量及高度。这个案例体现的是用源视频证据约束对象修改。<a href="https://kevinxu02.github.io/real2sim-indoor-site/">官方 X-Ray 展示</a></p>
+<p><strong>单视角对齐仍然存在歧义。</strong> 沿视线移动物体并改变尺寸，可能在一张图上得到近似投影。因此，多个时间点、俯视与侧视检查很重要。相机本身也来自估计，不能一开始就当成绝对正确。</p>
+<p>如果有分割掩码，可以定义轮廓误差或 IoU 来辅助比较。但博客没有据此建立一个统一、经过充分验证的场景正确性损失；不能把本文的数学说明写成作者已采用的训练目标。</p>
+<h2 id="section-8">6. Bullet 检查能验证到什么程度？</h2>
+<p>场景可能在特定视角下看起来正常，但花瓶插进墙里，椅子脚没有接触地面，或者物体悬浮。项目调用 Blender 的 Bullet 物理能力，检查碰撞、支撑及重力下的下落、倾斜和漂移。</p>
+<table>
+<thead>
+<tr>
+<th>发现的问题</th>
+<th>可能的修改</th>
+<th>仍需核对的证据</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>物体与墙穿插</td>
+<td>调整位置或几何</td>
+<td>是否仍匹配原视频</td>
+</tr>
+<tr>
+<td>物体下落</td>
+<td>补足支撑或修正高度</td>
+<td>真实场景是否存在该支撑</td>
+</tr>
+<tr>
+<td>物体倾倒</td>
+<td>检查朝向、底部和碰撞体</td>
+<td>倾倒来自建模错误还是物体本来不稳定</td>
+</tr>
+<tr>
+<td>物体漂移</td>
+<td>检查接触与初始穿透</td>
+<td>是否用错误固定约束掩盖了问题</td>
+</tr>
+</tbody>
+</table>
+<p>这里尤其值得注意的是“标为固定”这种处理。对于真实固定在墙上的柜体，它可能合理；对于机器人需要移动的桌子，它可能直接删除任务要求的自由度。因此，修复要由源视频和任务范围支持，不能只追求物理检查不再报错。</p>
+<p>通过这些检查，系统获得的是基础物理合理性。质量、惯量、摩擦、关节阻力、控制带宽和精密接触几何仍需另行验证。一个桌子在重力下站得住，不意味着真实 G1 能够按动画里的方式把它搬走。<a href="https://kevinxu02.github.io/real2sim-indoor-site/">官方碰撞与支撑说明</a></p>
+<p>这也解释了 AHa-3D 与 RoboSimStudio 的关注点差异：前者的这部分主要帮助发现放置与支撑错误；后者更强调不同物理模型、接触行为和柔性体的交互调试。二者都需要额外实验才能证明高保真动力学。</p>
+<h2 id="section-9">7. 人体运动：估计身体与对齐房间是两个问题</h2>
+<p>项目使用 GVHMR 恢复视频中人的姿态和运动。独立的人体恢复未必与独立重建的房间共享完全一致的尺度、方向和位置，所以可能出现脚悬空、坐不到沙发、手穿过桌面。</p>
+<p>博客介绍的处理包括：先利用相机和深度信息做整体位置与方向对齐，再根据场景设置接触约束，修正轨迹。</p>
+<p>可以把接触修正理解为同时考虑几类要求：动作仍接近原视频，脚与地面关系合理，身体与目标对象接触，轨迹变化保持连续。若只强行把脚拉到地面，可能破坏上半身与沙发的关系；若只让手碰到桌面，又可能引入不合理的身体位置。</p>
+<p>用户材料将这一过程描述为主要修正轨迹、保留恢复的身体关节姿态。适合把它理解为博客中的简化机制，不能概括所有后续实现。当前仓库已经包含 SAM3、PMPose、GVHMR 及额外的世界坐标和接触处理，文档区分了默认流程与实验分支。<a href="https://github.com/KevinXu02/aha-3d/blob/main/docs/REAL2SIM_PIPELINE.md">当前人体流程</a></p>
+<p>这部分需要明确区分三种误差：人物身份跟错、身体姿态估错，以及身体与房间对齐错误。后两步优化不能自然修复第一步；一个平滑且落地的人体也可能跟随了错误人物。</p>
+<p>同样，人体贴合沙发并不意味着肌肉动力学、接触力或受力平衡已经正确。几何接触修正的结果应按其实际约束范围解释。</p>
+<h2 id="section-10">8. G1 动作：运动生成到真实控制还差哪些环节？</h2>
+<p>项目展示了 G1 开灯和移动小桌子等动作，使用 Kimodo 根据文本、路径和关节目标生成连续运动。Agent 设置粗略路径、接触部位与时间，检查结果后调整目标或进行接触修正。</p>
+<figure class="diagram"><pre class="mermaid">flowchart LR
+    A[指令与场景] --&gt; B[Agent 设置路径与接触目标]
+    B --&gt; C[Kimodo 生成运动]
+    C --&gt; D[场景与接触检查]
+    D --&gt;|修正| B
+    D --&gt; E[场景中的动作展示]
+</pre><details><summary>Diagram source</summary><pre>flowchart LR
+    A[指令与场景] --&gt; B[Agent 设置路径与接触目标]
+    B --&gt; C[Kimodo 生成运动]
+    C --&gt; D[场景与接触检查]
+    D --&gt;|修正| B
+    D --&gt; E[场景中的动作展示]
+</pre></details></figure><p>这说明 Agent 能够把高层意图转成空间约束，并调用运动模型补全连续动作。它和真实机器人策略之间仍有明显距离。</p>
+<p>至少需要继续回答：生成关节运动是否满足速度和力矩限制，脚底能否提供所需支撑，机器人与物体的接触力是否足够，受到扰动后能否闭环恢复，以及搬动物体的轨迹是否由接触动力学产生。</p>
+<p>所以应将公开结果称为场景中的运动生成与对齐展示，不能写成真实 G1 的任务成功验证。特别是项目允许描述接触期间物体如何运动，这类目标或动画关系需要与“物体由机器人施力后自然运动”分开检查。<a href="https://kevinxu02.github.io/real2sim-indoor-site/">官方运动展示及限制</a></p>
+<h2 id="section-11">9. MiniMax 在哪里起作用？</h2>
+<p>项目先从 Blender 渲染几何、相机和动作，再把序列作为参考，交给 MiniMax H3 增强视频的视觉表现。</p>
+<p>这个阶段的作用是让画面更丰富、接近真实视频。几何证据和物理证据仍应回到 Blender 场景、原始输入及检查结果，而不能从增强后的画面反推。</p>
+<p>视频生成器可能改变外观细节，也可能引入与底层资产不一致的内容。因此，这类视频适合展示或某些数据生成研究；若用于机器人训练，需要另行检查动作条件、几何、接触和时间一致性。</p>
+<p>同一个项目中的可编辑场景、物理检查结果、人体或机器人运动、视觉增强视频，应当分别保存来源与验证状态。</p>
+<h2 id="section-12">10. 它到底“学”了什么？</h2>
+<p>AHa-3D 的主要过程是推理时工具调用和场景程序迭代。已有模型负责几何、分割和运动估计；Agent 通过修改代码与参数得到更符合视频的场景。</p>
+<p>一个简化表达是：</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi>S</mi><mrow><mi>k</mi><mo>+</mo><mn>1</mn></mrow></msub><mo>=</mo><mi mathvariant="normal">Edit</mi><mo>⁡</mo><mo stretchy="false">(</mo><msub><mi>S</mi><mi>k</mi></msub><mo separator="true">,</mo><msub><mi>e</mi><mi>k</mi></msub><mo stretchy="false">)</mo><mo separator="true">,</mo></mrow><annotation encoding="application/x-tex">
+S_{k+1}=\operatorname{Edit}(S_k,e_k),
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8917em;vertical-align:-0.2083em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0576em;">S</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:-0.0576em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right:0.0315em;">k</span><span class="mbin mtight">+</span><span class="mord mtight">1</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2083em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mop"><span class="mord mathrm">Edit</span></span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0576em;">S</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:-0.0576em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0315em;">k</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal">e</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0315em;">k</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mclose">)</span><span class="mpunct">,</span></span></span></span></span></eqn></section><p>其中 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>e</mi><mi>k</mi></msub></mrow><annotation encoding="application/x-tex">e_k</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.5806em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal">e</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0315em;">k</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span></eq> 为当前几何、投影或支撑检查暴露的问题。这不是对大模型权重进行梯度更新。</p>
+<p>项目也没有建立一个统一的端到端损失，把深度、家具生成、人体恢复和物理行为一起训练到最优。接触优化脚本可以包含数值求解，但局部数值优化与训练整个 Agent 是两个层面的事情。</p>
+<p>更准确的研究问题是：给定模型能力与工具预算，怎样组织观察、编辑和验证，使 Agent 更可靠地完成场景开发。Harness 的贡献主要体现在这个过程上。<a href="https://kevinxu02.github.io/real2sim-indoor-site/">项目工作流</a></p>
+<h2 id="section-13">11. 对照实验说明了什么？</h2>
+<p>官方比较了相同源视频、重建任务和 Medium reasoning effort 下，两种独立 Agent 运行：一个直接使用 Blender，自行决定流程；另一个使用额外几何工具和阶段化工作流。</p>
+<p>案例展示中，带 Harness 的结果在形状、尺寸、布局与源视角对齐上更好。但这是整体工具链的对照，额外几何模型、对象资产、验证机制和流程同时发生变化，因此不能把改善单独归因于某一条提示词或 X-Ray。</p>
+<p>如果要进一步研究各部分贡献，需要固定其余条件，分别移除相机估计、测量、对象检查和支撑检查，并对多个视频重复运行。</p>
+<h3 id="section-14">Token 数据不能解释为省成本</h3>
+<p>Beamed office 案例给出的总量是：</p>
+<table>
+<thead>
+<tr>
+<th>配置</th>
+<th style="text-align:right">总 token</th>
+<th style="text-align:right">其中缓存输入 token</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>无 Harness</td>
+<td style="text-align:right">7,130,509</td>
+<td style="text-align:right">6,939,776</td>
+</tr>
+<tr>
+<td>有 Harness</td>
+<td style="text-align:right">9,803,567</td>
+<td style="text-align:right">9,551,232</td>
+</tr>
+</tbody>
+</table>
+<p>有 Harness 的总 token 约多 37.5%。因此，该案例不能支持“加入工具链就减少 token”的结论。<a href="https://kevinxu02.github.io/real2sim-indoor-site/">官方工作流对照</a></p>
+<p>实际成本还取决于非缓存输入、输出、缓存读取价格和外部工具计算。仅从总量减去缓存输入，也不能直接得到输出 token。重建模型的 GPU 时间、Blender 渲染和人工审查同样需要计入。</p>
+<p>项目的主要证据仍是案例和定性对比，没有形成覆盖大量视频的统一几何误差、动力学可行性和真机任务成功率评测。它证明了工具编排路线的可行性，尚未建立普遍的精度或泛化保证。</p>
+<h2 id="section-15">12. 当前开源版本增加了哪些工程约束？</h2>
+<p>仓库不仅包含生成代码，也明确区分候选产物、检查结果与最终接受状态。验收文档将检查绑定到具体候选版本，要求对应的最终图像与视频证据，并保留未解决的问题。</p>
+<p>一个值得借鉴的原则是：成功运行脚本、生成图片或把场景加入列表，都不能单独证明重建任务完成。文档也说明，图像与记录存在不代表审查判断必然正确。<a href="https://github.com/KevinXu02/aha-3d/blob/main/docs/WORKFLOW_ACCEPTANCE.md">工作流验收说明</a></p>
+<p>这类设计能减少“看过旧版本，却批准了新版本”或“还有明显错位，但报告完成”的工程问题。它仍是验证流程的约束，而不是项目质量的统计实验。</p>
+<p>阅读这些仓库规则时，应把它们当作待理解系统的设计。本文没有运行该仓库，也没有触发其场景验收或重建流程。</p>
+<h2 id="section-16">13. 与 RoboSimStudio、GaP 放在一起怎样理解？</h2>
+<table>
+<thead>
+<tr>
+<th>工作</th>
+<th>主要开发对象</th>
+<th>最重要的反馈</th>
+<th>当前最需要区分的边界</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>AHa-3D</td>
+<td>对象化室内场景、相机及运动对齐</td>
+<td>源视角、几何测量、碰撞与支撑</td>
+<td>场景动画与机器人控制</td>
+</tr>
+<tr>
+<td>RoboSimStudio</td>
+<td>可执行物理模型及交互任务</td>
+<td>运动、接触、形变和真实失败</td>
+<td>可重现案例与广泛物理精度</td>
+</tr>
+<tr>
+<td>GaP</td>
+<td>模块化机器人策略程序</td>
+<td>执行结果、阶段状态、成功率和耗时</td>
+<td>任务图优化与跨任务技能积累</td>
+</tr>
+</tbody>
+</table>
+<p>一种可能的组合是：AHa-3D 提供场景布局与对象初稿，随后用物理建模工具检查任务相关交互，再用策略开发工具生成和优化控制程序。这是系统设计上的推论，不是这三个项目已经共同验证的一条流水线。</p>
+<p>组合时最难的部分往往是交接条件：对象是否有可信碰撞几何，关节是否真实存在，单位与坐标是否一致，质量和摩擦来自测量还是默认值，机器人动作接口和成功判定是否完整。一个 <code>.blend</code> 文件不能自动补齐这些条件。</p>
+<h2 id="section-17">14. 对 RUA / Dex-RUA 的价值</h2>
+<p>对于 RUA，AHa-3D 很适合启发一种能力评估：Agent 能否调用专业工具，定位具体错误，并以更少的修改获得可靠结果。应分别测量工具选择、诊断、修复和最终任务表现。</p>
+<p>例如场景里的柜门打不开，Agent 需要判断：门被整体并入柜体，关节轴错误，碰撞体互相穿透，还是动作本身不合适。仅说“重试”或重新生成整个场景，未必是有效修复。</p>
+<p>如果做环境构建 benchmark，可以用以下维度评价，而不是只看渲染：</p>
+<ul>
+<li>对象结构：该独立的部件是否分离，运动自由度是否正确。</li>
+<li>几何与尺度：未用于调整的视角中是否仍然对齐。</li>
+<li>基础物理：支撑、碰撞和可动性是否符合证据。</li>
+<li>任务接口：是否能接收机器人动作并给出独立成功判定。</li>
+<li>开发成本：模型调用、GPU 时间、失败运行与人工介入。</li>
+</ul>
+<p>对 Dex-RUA，房间尺度的近似几何更适合提供上下文。精密插入、旋拧和指内操作还需要局部精细几何、真实关节和接触参数。不能因为室内布局恢复得好，就认为指尖尺度的接触也已可用。</p>
+<p>此外，仿真真值可以用于构建期诊断，但最终策略能看到什么，应由评测协议决定。工具支持读取精确位置，不等于测试时可以无条件提供给 Agent。</p>
+<h2 id="section-18">15. 如何开始复现？</h2>
+<p>当前仓库区分 <code>static</code>、<code>human</code> 和 <code>robotics</code> 三种安装范围。只理解静态房间重建，可以先看 <code>static</code>，无需同时安装所有人体与机器人运动组件。</p>
+<pre><code class="language-bash">git clone https://github.com/KevinXu02/aha-3d.git
+cd aha-3d
+bash tools/setup.sh --level static --plan
+bash tools/setup.sh --level static
+</code></pre>
+<p>上述命令是官方安装入口，本次没有执行。Pi3X、SAM3 权重和 Blender 仍需按文档单独准备，安装 Python 环境不等于完整重建能力已经就绪。</p>
+<p>官方说明主要面向 Linux、Python 3.11、FFmpeg 和兼容 CUDA 12.8 的 NVIDIA 环境。场景库使用 Blender 5.2；人体蒙皮还涉及单独的 Blender 配置。24 GB 显存是目标配置，既往验证使用过 96 GB，不能承诺在 24 GB 上完整流程都已验证。<a href="https://github.com/KevinXu02/aha-3d">仓库环境说明</a></p>
+<p>我会先读官方 Office 示例，沿着“源视频—参考几何—对象场景—X-Ray 修复—最终交付”检查每一步的实际产物。之后再加入人物和新动作，避免把几何、身份跟踪、运动和物理问题同时混在一次调试中。</p>
+<p>AHa-3D 最有迁移价值的思想是：让 Agent 的场景判断落到可测量、可重投影、可编辑的对象上，再依据检查结果修改。它已经展示了这种方法能改善室内重建；进一步用于机器人操作，需要把几何与动画上的合理性转化为经过验证的物理交互能力。</p>
+<footer><a href="../index.html#blog">← Back to Blog</a></footer></article></main><script src="vendor/mermaid.min.js"></script><script>mermaid.initialize({startOnLoad:true,securityLevel:"strict",theme:"neutral",fontFamily:"system-ui",flowchart:{htmlLabels:false}});</script></body></html>

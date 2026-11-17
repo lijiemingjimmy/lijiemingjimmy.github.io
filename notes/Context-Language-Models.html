@@ -1,0 +1,213 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Context Language Models｜让 Agent 学会维护自己下一步要看的上下文 · Jieming Li</title><link rel="stylesheet" href="../assets/styles.css"><link rel="stylesheet" href="../assets/notes.css"><link rel="stylesheet" href="vendor/katex/katex.min.css"></head><body class="note-page"><header class="note-nav"><a href="../index.html#blog">← Blog</a><a href="../index.html">Jieming Li</a></header><main class="note-layout"><aside class="note-outline"><p class="eyebrow">On this page</p><nav aria-label="目录"><ol><li><a href="#section-0">1. 从记录历史到维护当前工作状态</a></li><li><a href="#section-1">2. Context-as-a-File 实际改变了哪一层？</a></li><li><a href="#section-2">3. ContextBench 为什么要设计四种任务？</a></li><li><a href="#section-3">4. 两条学习路线分别改什么？</a></li><li><a href="#section-6">5. 五分钟推导：怎样奖励省算力，又保住任务结果？</a></li><li><a href="#section-7">6. 为什么删完上下文，计算量有时反而增加？</a></li><li><a href="#section-9">7. 几组实验应该怎样一起读？</a></li><li><a href="#section-10">8. 对 Robot-Use Agent 和 Skill Evolution 的启发</a></li></ol></nav></aside><article class="note-content" id="content"><p class="eyebrow">Research notebook · 研究笔记</p><h1 id="noteTitle">Context Language Models｜让 Agent 学会维护自己下一步要看的上下文</h1>
+<p>Rulin Shao 等，University of Washington、Meta Superintelligence Labs、MIT 等机构，2026 年 9 月 29 日。依据用户提供的解读整理，并核对论文 v1 的方法、训练设置和实验口径。<a href="https://arxiv.org/abs/2609.37725v1">论文</a> · <a href="https://github.com/facebookresearch/context-language-models">代码</a></p>
+<p>一个 Agent 连续工作十二小时，会留下搜索结果、终端输出、错误路线、当前计划，以及多个子任务的状态。下一步做决定时，它需要的信息通常很具体：目标是什么，什么已经验证过，什么还没做，哪份文件保存着证据。</p>
+<p>CLM 把当前上下文映射成一个可编辑文件。模型可以用 Bash 或 Python 修改它，运行时再把修改后的内容同步为下一次模型调用的输入。上下文因此可以随着任务更新，既能压缩旧内容，也能原位维护状态、移出长材料、按需重新读取。</p>
+<h2 id="section-0">1. 从记录历史到维护当前工作状态</h2>
+<p>考虑一次修 bug 的过程。历史里可能先怀疑数据库连接池，搜索得到几千行输出，随后实验排除这个假设，最后发现真正的问题是缓存键漏了用户 ID。修复已经写好，回归测试还没完成。</p>
+<p>下一轮更需要看到的是：</p>
+<blockquote>
+<p>当前问题是缓存键遗漏用户 ID。修复位于 <a href="http://cache.py">cache.py</a>。连接池假设已排除，证据保存于日志文件。下一步运行跨用户隔离测试，尚未确认修复通过。</p>
+</blockquote>
+<p>这个改写删除了无关细节，保留了失败结论，更新了当前状态。“尚未确认”也有必要保留，否则下一轮可能把修复当成已经完成。</p>
+<p>CLM 将这些操作交给模型决定。形式上，普通追加式交互是</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi>c</mi><mrow><mi>t</mi><mo>+</mo><mn>1</mn></mrow></msub><mo>=</mo><msub><mi>c</mi><mi>t</mi></msub><mo>⊕</mo><msubsup><mi>f</mi><mi>θ</mi><mrow><mi mathvariant="normal">L</mi><mi mathvariant="normal">M</mi></mrow></msubsup><mo stretchy="false">(</mo><msub><mi>c</mi><mi>t</mi></msub><mo stretchy="false">)</mo><mo separator="true">,</mo></mrow><annotation encoding="application/x-tex">
+c_{t+1}=c_t\oplus f_\theta^{\mathrm{LM}}(c_t),
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6389em;vertical-align:-0.2083em;"></span><span class="mord"><span class="mord mathnormal">c</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">t</span><span class="mbin mtight">+</span><span class="mord mtight">1</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2083em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.7333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal">c</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">⊕</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1.1413em;vertical-align:-0.25em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1076em;">f</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.8913em;"><span style="top:-2.453em;margin-left:-0.1076em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0278em;">θ</span></span></span><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">LM</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.247em;"><span></span></span></span></span></span></span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal">c</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mclose">)</span><span class="mpunct">,</span></span></span></span></span></eqn></section><p>CLM 则写成</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi>c</mi><mrow><mi>t</mi><mo>+</mo><mn>1</mn></mrow></msub><mo>=</mo><msubsup><mi>f</mi><mi>θ</mi><mrow><mi mathvariant="normal">C</mi><mi mathvariant="normal">L</mi><mi mathvariant="normal">M</mi></mrow></msubsup><mo stretchy="false">(</mo><msub><mi>c</mi><mi>t</mi></msub><mo stretchy="false">)</mo><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+c_{t+1}=f_\theta^{\mathrm{CLM}}(c_t).
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6389em;vertical-align:-0.2083em;"></span><span class="mord"><span class="mord mathnormal">c</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight">t</span><span class="mbin mtight">+</span><span class="mord mtight">1</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2083em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1.1413em;vertical-align:-0.25em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1076em;">f</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.8913em;"><span style="top:-2.453em;margin-left:-0.1076em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0278em;">θ</span></span></span><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">CLM</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.247em;"><span></span></span></span></span></span></span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal">c</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.2806em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">t</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mclose">)</span><span class="mord">.</span></span></span></span></span></eqn></section><p>第二个式子概括了模型决策、执行文件操作、运行时同步的整个过程。具体实现仍由多次生成和工具调用构成。<a href="https://arxiv.org/html/2609.37725v1#S4.SS1">论文 §4.1</a></p>
+<h2 id="section-1">2. Context-as-a-File 实际改变了哪一层？</h2>
+<p>一次上下文更新可以写成：</p>
+<pre><code class="language-text">当前上下文
+    ↓
+模型生成普通回答，或调用代码编辑上下文文件
+    ↓
+运行时读取修改结果
+    ↓
+下一轮请求使用更新后的上下文
+</code></pre>
+<p>这要求运行时提供一个真正参与下一轮输入构造的文件。普通笔记文件可以存储经验，但只有在被读取时才进入模型输入。CLM 的上下文文件会被同步，所以删除旧工具输出能够直接改变下一轮输入。</p>
+<p>模型没有编辑文件时，生成结果照常追加。多 Agent 场景可以维护多个文件，每份文件对应一个 Agent 的上下文。模型可以更新子任务进度、整理当前最优方案，或者为下一轮探索保留候选方向。<a href="https://arxiv.org/html/2609.37725v1#S4.SS1">论文 §4.1</a></p>
+<p>论文的轨迹例子包括维护计分板、逐段删除无关搜索结果，以及编写可复用的 compact_turns()。一条数学优化轨迹进行了 163 次原位编辑，上下文保持在约 6K–8K tokens。另一条轨迹复用了压缩函数 37 次。这些是具体运行中出现的行为，能否在其他任务上稳定出现仍取决于模型能力。<a href="https://arxiv.org/html/2609.37725v1#S4.SS1">论文图 3</a></p>
+<p>我理解这里可以学习的能力有两层。第一层是判断哪些信息对后续任务有用，第二层是选择适合它的存储形式。精确数值适合表格，状态适合原位更新，长日志适合保存路径和索引，失败探索适合保留结论与证据位置。</p>
+<h2 id="section-2">3. ContextBench 为什么要设计四种任务？</h2>
+<table>
+<thead>
+<tr>
+<th>任务</th>
+<th>Agent 要维护什么</th>
+<th>容易出错的地方</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Needle Retention</td>
+<td>指定内容的逐字记录</td>
+<td>摘要保住意思，却改了原文</td>
+</tr>
+<tr>
+<td>Sudoku Sketchpad</td>
+<td>用户持续修改后的棋盘</td>
+<td>旧状态没有被正确替换</td>
+</tr>
+<tr>
+<td>KV Store</td>
+<td>键对应的最新精确值</td>
+<td>值被压缩损坏，或查询到旧版本</td>
+</tr>
+<tr>
+<td>Log Triage</td>
+<td>大量日志中的特定证据</td>
+<td>日志占满窗口，相关记录被丢掉</td>
+</tr>
+</tbody>
+</table>
+<p>实验把窗口固定为 32K，总输入压力最高达到窗口的 24 倍。压力来自持续输入与管理过程，Agent 可以把内容移到外部文件，在需要时取回。图中 CLM 在这些诊断任务上保持很高准确率，反映了精确保留、状态更新和检索的组合价值。<a href="https://arxiv.org/html/2609.37725v1#S3">论文 §3、图 2</a></p>
+<p>“用户要求使用哪个参数值”和“这段日志大概讲了什么”需要不同的保真程度。上下文策略必须根据任务选择哪些内容可以概括，哪些内容要逐字保存。四类合成任务能够检验这些基本操作，开放环境中的长期可靠性还需要后续任务验证。</p>
+<h2 id="section-3">4. 两条学习路线分别改什么？</h2>
+<h3 id="section-4">Skill Evolution 改上下文管理规则</h3>
+<p>给模型一份管理策略，例如保留未完成任务、给检索证据留下文档 ID、把大段日志移到外部文件。论文通过以下循环优化这份文本。</p>
+<ol>
+<li>用当前 skill 在训练任务上运行，收集轨迹。</li>
+<li>Proposer 根据轨迹提出新的 skill。</li>
+<li>在 development split 上比较候选，选出下一轮版本。</li>
+<li>最后对选中的版本做一次 held-out test。</li>
+</ol>
+<p>Proposer 可以是更强的模型，也可以是执行任务的模型自身。优化对象是 skill 文本，模型参数保持固定。KV Store 的 Assisted Evolution 实验中，held-out 准确率从 38.3% 升至 74.2%。这项结果对应特定模型和演化设置，与前面的零样本诊断图分开看。<a href="https://arxiv.org/html/2609.37725v1#S5.SS2">论文 §4.2、§5.2</a></p>
+<h3 id="section-5">RL 改模型生成管理行为的概率</h3>
+<p>参数学习让模型从任务反馈中学会何时编辑、保留什么、如何组织。每条完整轨迹包括普通推理、工具调用、上下文编辑和最终结果。</p>
+<p>上下文编辑会改变后续模型看到的输入。因此训练要保存每次调用当时的上下文及其生成片段，再用完整轨迹的结果计算优势，分配给这些片段。这就是论文采用 stepwise GRPO 的原因。</p>
+<p>模型学到的是生成某种编辑决策的概率。文件读写作为环境操作执行，最终任务反馈影响策略更新。<a href="https://arxiv.org/html/2609.37725v1#S4.SS2">论文 §4.2</a></p>
+<h2 id="section-6">5. 五分钟推导：怎样奖励省算力，又保住任务结果？</h2>
+<p>假设一条轨迹保留必要证据，最后成功，花 2 单位计算量。另一条轨迹很早就把证据删掉，花 0.2 单位计算量，却回答失败。若只奖励短上下文，后者反而占优。</p>
+<p>即使同时加上任务奖励，固定的成本惩罚系数也可能对不同难度的问题产生不同影响。很难的问题本来就需要更多搜索和推理。</p>
+<p>论文把效率比较限定在<strong>同一个问题的成功轨迹之间</strong>。设一组轨迹中，成功集合为 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msup><mi>G</mi><mo>+</mo></msup></mrow><annotation encoding="application/x-tex">G^+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.7713em;"></span><span class="mord"><span class="mord mathnormal">G</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.7713em;"><span style="top:-3.063em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mbin mtight">+</span></span></span></span></span></span></span></span></span></span></span></eq>，第 i 条轨迹开销为 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>c</mi><mi>i</mi></msub></mrow><annotation encoding="application/x-tex">c_i</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.5806em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal">c</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span></eq>。成功轨迹的平均开销为</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mover accent="true"><mi>c</mi><mo>ˉ</mo></mover><mi>g</mi></msub><mo>=</mo><mfrac><mn>1</mn><mrow><mi mathvariant="normal">∣</mi><msup><mi>G</mi><mo>+</mo></msup><mi mathvariant="normal">∣</mi></mrow></mfrac><munder><mo>∑</mo><mrow><mi>k</mi><mo>∈</mo><msup><mi>G</mi><mo>+</mo></msup></mrow></munder><msub><mi>c</mi><mi>k</mi></msub><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+\bar c_g=\frac{1}{|G^+|}\sum_{k\in G^+}c_k.
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8539em;vertical-align:-0.2861em;"></span><span class="mord"><span class="mord katex-accent"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.5678em;"><span style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span class="mord mathnormal">c</span></span><span style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span class="accent-body" style="left:-0.1944em;"><span class="mord">ˉ</span></span></span></span></span></span></span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0359em;">g</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:2.6567em;vertical-align:-1.3352em;"></span><span class="mord"><span class="mopen nulldelimiter"></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.3214em;"><span style="top:-2.314em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord">∣</span><span class="mord"><span class="mord mathnormal">G</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.6973em;"><span style="top:-2.989em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mbin mtight">+</span></span></span></span></span></span></span></span><span class="mord">∣</span></span></span><span style="top:-3.23em;"><span class="pstrut" style="height:3em;"></span><span class="frac-line" style="border-bottom-width:0.04em;"></span></span><span style="top:-3.677em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord">1</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.936em;"><span></span></span></span></span></span><span class="mclose nulldelimiter"></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mop op-limits"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.05em;"><span style="top:-1.8421em;margin-left:0em;"><span class="pstrut" style="height:3.05em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathnormal mtight" style="margin-right:0.0315em;">k</span><span class="mrel mtight">∈</span><span class="mord mtight"><span class="mord mathnormal mtight">G</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.7027em;"><span style="top:-2.786em;margin-right:0.0714em;"><span class="pstrut" style="height:2.5em;"></span><span class="katex-sizing reset-size3 size1 mtight"><span class="mbin mtight">+</span></span></span></span></span></span></span></span></span></span></span><span style="top:-3.05em;"><span class="pstrut" style="height:3.05em;"></span><span><span class="mop op-symbol large-op">∑</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:1.3352em;"><span></span></span></span></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal">c</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0315em;">k</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mord">.</span></span></span></span></span></eqn></section><p>效率优势定义为</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msubsup><mi>A</mi><mi>i</mi><mrow><mi mathvariant="normal">e</mi><mi mathvariant="normal">f</mi><mi mathvariant="normal">f</mi></mrow></msubsup><mo>=</mo><mrow><mo fence="true">{</mo><mtable rowspacing="0.36em" columnalign="left left" columnspacing="1em"><mtr><mtd><mstyle scriptlevel="0" displaystyle="false"><mrow><mi mathvariant="normal">clip</mi><mo>⁡</mo><mrow><mo fence="true">(</mo><mstyle scriptlevel="0" displaystyle="true"><mfrac><mrow><msub><mover accent="true"><mi>c</mi><mo>ˉ</mo></mover><mi>g</mi></msub><mo>−</mo><msub><mi>c</mi><mi>i</mi></msub></mrow><msub><mover accent="true"><mi>c</mi><mo>ˉ</mo></mover><mi>g</mi></msub></mfrac></mstyle><mo separator="true">,</mo><mo>−</mo><mn>1</mn><mo separator="true">,</mo><mn>1</mn><mo fence="true">)</mo></mrow><mo separator="true">,</mo></mrow></mstyle></mtd><mtd><mstyle scriptlevel="0" displaystyle="false"><mrow><mi>i</mi><mo>∈</mo><msup><mi>G</mi><mo>+</mo></msup><mo separator="true">,</mo><mtext> </mtext><mi mathvariant="normal">∣</mi><msup><mi>G</mi><mo>+</mo></msup><mi mathvariant="normal">∣</mi><mo>≥</mo><mn>2</mn><mo separator="true">,</mo></mrow></mstyle></mtd></mtr><mtr><mtd><mstyle scriptlevel="0" displaystyle="false"><mrow><mn>0</mn><mo separator="true">,</mo></mrow></mstyle></mtd><mtd><mstyle scriptlevel="0" displaystyle="false"><mrow><mtext>其他情况</mtext><mi mathvariant="normal">.</mi></mrow></mstyle></mtd></mtr></mtable></mrow></mrow><annotation encoding="application/x-tex">
+A_i^{\mathrm{eff}}=
+\begin{cases}
+\operatorname{clip}\left(\dfrac{\bar c_g-c_i}{\bar c_g},-1,1\right),
+&amp; i\in G^+,\ |G^+|\ge2,\\
+0,&amp;\text{其他情况}.
+\end{cases}
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:1.1461em;vertical-align:-0.247em;"></span><span class="mord"><span class="mord mathnormal">A</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.8991em;"><span style="top:-2.453em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight" style="margin-right:0.0778em;">eff</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.247em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:3.8621em;vertical-align:-1.6811em;"></span><span class="minner"><span class="mopen"><span class="delimsizing mult"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:2.05em;"><span style="top:-2.5em;"><span class="pstrut" style="height:3.15em;"></span><span class="delimsizinginner delim-size4"><span>⎩</span></span></span><span style="top:-2.492em;"><span class="pstrut" style="height:3.15em;"></span><span style="height:0.016em;width:0.8889em;"><svg xmlns="http://www.w3.org/2000/svg" width="0.8889em" height="0.016em" style="width:0.8889em" viewBox="0 0 888.89 16" preserveAspectRatio="xMinYMin"><path d="M384 0 H504 V16 H384z M384 0 H504 V16 H384z"/></svg></span></span><span style="top:-3.15em;"><span class="pstrut" style="height:3.15em;"></span><span class="delimsizinginner delim-size4"><span>⎨</span></span></span><span style="top:-4.292em;"><span class="pstrut" style="height:3.15em;"></span><span style="height:0.016em;width:0.8889em;"><svg xmlns="http://www.w3.org/2000/svg" width="0.8889em" height="0.016em" style="width:0.8889em" viewBox="0 0 888.89 16" preserveAspectRatio="xMinYMin"><path d="M384 0 H504 V16 H384z M384 0 H504 V16 H384z"/></svg></span></span><span style="top:-4.3em;"><span class="pstrut" style="height:3.15em;"></span><span class="delimsizinginner delim-size4"><span>⎧</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:1.55em;"><span></span></span></span></span></span></span><span class="mord"><span class="mtable"><span class="col-align-l"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:2.1811em;"><span style="top:-4.1811em;"><span class="pstrut" style="height:3.45em;"></span><span class="mord"><span class="mop"><span class="mord mathrm">clip</span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="minner"><span class="mopen delimcenter" style="top:0em;"><span class="delimsizing size3">(</span></span><span class="mord"><span class="mopen nulldelimiter"></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.2603em;"><span style="top:-2.314em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord"><span class="mord katex-accent"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.5678em;"><span style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span class="mord mathnormal">c</span></span><span style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span class="accent-body" style="left:-0.1944em;"><span class="mord">ˉ</span></span></span></span></span></span></span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0359em;">g</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span></span></span><span style="top:-3.23em;"><span class="pstrut" style="height:3em;"></span><span class="frac-line" style="border-bottom-width:0.04em;"></span></span><span style="top:-3.677em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord"><span class="mord katex-accent"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.5678em;"><span style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span class="mord mathnormal">c</span></span><span style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span class="accent-body" style="left:-0.1944em;"><span class="mord">ˉ</span></span></span></span></span></span></span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.1514em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0359em;">g</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mord"><span class="mord mathnormal">c</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.9721em;"><span></span></span></span></span></span><span class="mclose nulldelimiter"></span></span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord">−</span><span class="mord">1</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord">1</span><span class="mclose delimcenter" style="top:0em;"><span class="delimsizing size3">)</span></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mpunct">,</span></span></span><span style="top:-2.2009em;"><span class="pstrut" style="height:3.45em;"></span><span class="mord"><span class="mord">0</span><span class="mpunct">,</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:1.6811em;"><span></span></span></span></span></span><span class="arraycolsep" style="width:1em;"></span><span class="col-align-l"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:2.1811em;"><span style="top:-4.1811em;"><span class="pstrut" style="height:3.45em;"></span><span class="mord"><span class="mord mathnormal">i</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">∈</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mord"><span class="mord mathnormal">G</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.7713em;"><span style="top:-3.063em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mbin mtight">+</span></span></span></span></span></span></span></span><span class="mpunct">,</span><span class="mspace"> </span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord">∣</span><span class="mord"><span class="mord mathnormal">G</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.7713em;"><span style="top:-3.063em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mbin mtight">+</span></span></span></span></span></span></span></span><span class="mord">∣</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">≥</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mord">2</span><span class="mpunct">,</span></span></span><span style="top:-2.2009em;"><span class="pstrut" style="height:3.45em;"></span><span class="mord"><span class="mord text"><span class="mord cjk_fallback">其他情况</span></span><span class="mord">.</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:1.6811em;"><span></span></span></span></span></span></span></span><span class="mclose nulldelimiter"></span></span></span></span></span></span></eqn></section><p>只在成功集合内算平均值，失败轨迹省下的计算量不会拉低参照。用平均开销减去当前开销，更省的一条得到正值，再除以平均开销，得到相对节省比例。成功不足两条时关闭这项信号，clip 则限制极端成本差异的影响。</p>
+<p>假设同一个问题产生三条轨迹。</p>
+<table>
+<thead>
+<tr>
+<th>轨迹</th>
+<th>结果</th>
+<th style="text-align:right">开销</th>
+<th style="text-align:right">效率优势</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A</td>
+<td>成功</td>
+<td style="text-align:right">1</td>
+<td style="text-align:right">+1/3</td>
+</tr>
+<tr>
+<td>B</td>
+<td>成功</td>
+<td style="text-align:right">2</td>
+<td style="text-align:right">−1/3</td>
+</tr>
+<tr>
+<td>C</td>
+<td>失败</td>
+<td style="text-align:right">0.1</td>
+<td style="text-align:right">0</td>
+</tr>
+</tbody>
+</table>
+<p>成功轨迹平均开销为 1.5。C 即使最便宜，也拿不到效率优势。任务结果优势仍然负责区分成功与失败。总优势在概念上为</p>
+<section><eqn><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi>A</mi><mi>i</mi></msub><mo>=</mo><msubsup><mi>A</mi><mi>i</mi><mrow><mi mathvariant="normal">o</mi><mi mathvariant="normal">u</mi><mi mathvariant="normal">t</mi></mrow></msubsup><mo>+</mo><msub><mi>w</mi><mrow><mi mathvariant="normal">e</mi><mi mathvariant="normal">f</mi><mi mathvariant="normal">f</mi></mrow></msub><msubsup><mi>A</mi><mi>i</mi><mrow><mi mathvariant="normal">e</mi><mi mathvariant="normal">f</mi><mi mathvariant="normal">f</mi></mrow></msubsup><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">
+A_i=A_i^{\mathrm{out}}+w_{\mathrm{eff}}A_i^{\mathrm{eff}}.
+</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal">A</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1.0906em;vertical-align:-0.247em;"></span><span class="mord"><span class="mord mathnormal">A</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.8436em;"><span style="top:-2.453em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">out</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.247em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1.1461em;vertical-align:-0.247em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0269em;">w</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:-0.0269em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight" style="margin-right:0.0778em;">eff</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mord"><span class="mord mathnormal">A</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.8991em;"><span style="top:-2.453em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight">i</span></span></span><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight" style="margin-right:0.0778em;">eff</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.247em;"><span></span></span></span></span></span></span><span class="mord">.</span></span></span></span></span></eqn></section><p>实际配置把 <eq><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>w</mi><mrow><mi mathvariant="normal">e</mi><mi mathvariant="normal">f</mi><mi mathvariant="normal">f</mi></mrow></msub></mrow><annotation encoding="application/x-tex">w_{\mathrm{eff}}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.5806em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0269em;">w</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:-0.0269em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight" style="margin-right:0.0778em;">eff</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span></eq> 设为 0.25，额外效率优势应用于上下文管理相关 token。普通结果优势分配给轨迹中的生成片段。<a href="https://arxiv.org/html/2609.37725v1#S4.SS2">论文 §4.2 与附录训练设置</a></p>
+<p>这一设计减少了“为了省而失败”的直接激励。不过，效果依赖任务判分。如果判分遗漏要求，丢掉关键信息的轨迹仍可能被算作成功。轨迹级奖励也只能提供较粗的归因，难以直接判定某一次删除究竟帮了忙还是留下了隐患。</p>
+<h2 id="section-7">6. 为什么删完上下文，计算量有时反而增加？</h2>
+<p>假设当前输入为 A、B、C 三段，模型把中间的 B 换成更短的 B′。输入长度确实减少了，但标准前缀缓存通常只能复用 A。B′ 需要重新计算，C 的表示依赖前面的内容，也需要重新 prefill。</p>
+<p>一次编辑的收益因此取决于后续使用次数。为了省掉少量 token 而不断修改靠前的位置，可能反复触发长后缀重算。一次有针对性的编辑则可能让后面几十轮都更便宜。</p>
+<p>论文用 prefix-reuse FLOPs 计算标准服务下的成本，包含 prefill、前缀失配后的重新 prefill，以及新 token 的 decode。效率奖励由此比“删掉多少 token”更贴近模型计算。<a href="https://arxiv.org/html/2609.37725v1#S4.SS1">论文公式 3</a></p>
+<h3 id="section-8">Suffix Cache Reuse 再省哪一部分？</h3>
+<p>SCR 在编辑前后寻找仍保留的 token span，复用这些位置原来的 KV，并调整 RoPE 位置。这样 C 即使处于编辑点之后，也有机会复用缓存，主要重新计算新增内容。论文在 SGLang 中实现了这套机制，并讨论混合 full attention 与 linear attention 架构的处理。</p>
+<p>旧 C 的缓存包含此前看到 B 时形成的信息。RoPE 调整能处理位置变化，历史前缀变化造成的语义依赖仍然存在。所以 SCR 使用近似缓存状态，准确率是否保持要靠实验评估。</p>
+<p>在单独的 Qwen3.6-27B BrowseComp-Plus 服务实验中，标准服务与 SCR 都得到 60.2%，每题报告计算量从 10.98 降至 7.14 PFLOPs，约减少 35%。实际耗时还受内存访问、调度、工具等待等影响。<a href="https://arxiv.org/html/2609.37725v1#S5.SS3">论文 §4.3、§5.3</a></p>
+<h2 id="section-9">7. 几组实验应该怎样一起读？</h2>
+<table>
+<thead>
+<tr>
+<th>实验</th>
+<th>主要结果</th>
+<th>对应的问题</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>27B 模型零样本 BrowseComp-Plus</td>
+<td>CLM 59.4%，比最强对照相对高 11.4%，少用 21.5% FLOPs</td>
+<td>现有模型能否直接使用可编辑上下文</td>
+</tr>
+<tr>
+<td>9B 模型 CLM，RL 前后</td>
+<td>28.8% → 42.5%</td>
+<td>管理行为能否进一步训练</td>
+</tr>
+<tr>
+<td>RL 后 CLM 与 Summary</td>
+<td>42.5% 对 42.1%，1.34 对 2.19 PFLOPs/题</td>
+<td>训练后的准确率和成本如何权衡</td>
+</tr>
+<tr>
+<td>12 小时 EdgeBench-10</td>
+<td>44.6 对 42.3，FLOPs 减少约 59%</td>
+<td>长任务中是否持续受益</td>
+</tr>
+<tr>
+<td>SCR 单独实验</td>
+<td>准确率均为 60.2%，计算量减少约 35%</td>
+<td>服务实现还能省多少计算</td>
+</tr>
+</tbody>
+</table>
+<p>来源为论文 §5 及对应附录。<a href="https://arxiv.org/html/2609.37725v1#S5">结果与配置</a></p>
+<p>59.4% 那一项的 11.4% 是相对提升。9B 模型的 28.8% → 42.5% 是增加 13.7 个百分点，相对提升约 47.6%。这些数值描述不同模型和实验。</p>
+<p>训练对照有一个影响归因的细节。CLM 额外获得效率优势，Summary harness 只用任务奖励。因此，1.34 对 2.19 PFLOPs 的差距体现了接口与训练目标的组合。要估计其中多少单独来自上下文编辑自由度，还需要匹配奖励的对照。论文也报告，9B 模型训练前的 CLM 准确率低于 Summary，说明更大的操作自由度需要相应的管理能力。<a href="https://arxiv.org/html/2609.37725v1#S5.SS2">附录训练设置与 §5.2</a></p>
+<p>长期任务的范围也要保留。EdgeBench-10 是公开可运行任务中的十个任务子集。持续十二小时的运行能检验较长周期的状态维护，跨领域稳定性仍需要更广的测试。</p>
+<h2 id="section-10">8. 对 Robot-Use Agent 和 Skill Evolution 的启发</h2>
+<p>下面是基于论文方法的研究设想。</p>
+<table>
+<thead>
+<tr>
+<th>工作上下文中的信息</th>
+<th>更新方式</th>
+<th>需要保留的内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>当前状态</td>
+<td>新观测后更新</td>
+<td>物体位置、夹爪状态、估计时间与不确定性</td>
+</tr>
+<tr>
+<td>执行证据</td>
+<td>按事件追加，工作上下文保留索引</td>
+<td>做过什么、原始工具输出位置</td>
+</tr>
+<tr>
+<td>可复用经验</td>
+<td>跨任务整理</td>
+<td>失败条件、恢复方法、skill 参数及适用范围</td>
+</tr>
+</tbody>
+</table>
+<p>CLM 可以让 Agent 决定当前应展开哪段历史、何时缩短失败轨迹、怎样保留未完成任务。原始执行记录另行保存，才能在工作上下文被改写后检查行为与结论是否对应。</p>
+<p>一个直接实验是固定基础模型、动作工具、观测来源和交互预算，只改变上下文管理方式，比较固定摘要、自主触发摘要和文件编辑。除了最终成功率，还可以记录重复执行、遗漏子目标、使用过时状态的次数，以及模型与工具的总成本。</p>
+<p>对于 Skill Evolution，可以追踪一条管理规则如何迁移。例如“每次执行后更新任务状态，同时保留证据索引”是否在新布局、新物体和更长任务中仍然有效。让规则在训练任务上演化，在验证任务上选择，最后到留出任务上测试，才能判断它学到了多大程度的可复用管理能力。</p>
+<p>CLM 给长期 Agent 增加了一个可学习的决策对象：下一轮应该看哪些信息，以及这些信息应该以什么形式出现。它的收益取决于模型能否维护正确状态、保留必要证据，并让编辑后的推理成本真正下降。</p>
+<footer><a href="../index.html#blog">← Back to Blog</a></footer></article></main></body></html>

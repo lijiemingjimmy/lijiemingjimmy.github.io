@@ -1,4 +1,4 @@
-import { setupNotes } from "./notes.js?v=20261101-blog";
+import { setupNotes } from "./notes.js?v=20261117";
 
 export const siteData = {
   "news": [
@@ -73,37 +73,7 @@ export const siteData = {
       ]
     }
   ],
-  "posts": [
-    {
-      "slug": "wam",
-      "date": "2026",
-      "category": "Writing & Education",
-      "title": "WAM 写作智能体｜在追问中让想法变成自己的文章",
-      "summary": "从模糊灵感，到自己的观点。一个陪你提出问题、辨析概念、梳理论据的写作伙伴。",
-      "tags": [
-        "Rust",
-        "Agents",
-        "Education"
-      ],
-      "image": "assets/images/wam-card.png",
-      "links": [
-        {
-          "label": "代码仓库",
-          "href": "https://github.com/lijiemingjimmy/writing-agent-rust"
-        },
-        {
-          "label": "立即体验",
-          "href": "https://lijiemingjimmy.github.io/writing-coach-agent/"
-        }
-      ],
-      "body": [
-        "我有一个粗略的想法，但我应该怎么把这个想法变成一个可以写成文章的提案？WAM 从这一刻开始，陪你把模糊的兴趣推进成值得讨论的问题。",
-        "它通过追问具体经历、辨析概念、梳理论据，帮助你逐步形成自己的判断与文章思路。你可以把它当做一款开放式游戏，你的选择决定讨论走向。",
-        "项目以 Rust 构建核心 Agent，结合写作阶段记忆、课程资料检索与可追溯的运行过程，并提供学生对话界面和教师教学工作台。防代写机制让引导始终围绕学生自己的思考与修改展开。",
-        "从一次困惑出发，看看几轮对话能把你的想法带到哪里。可联系作者微信 li-jm25 获得体验权限。"
-      ]
-    }
-  ]
+  "posts": []
 };
 
 const topLevelViews = new Set(["main", "info", "research", "blog"]);
@@ -181,7 +151,6 @@ export function renderBlog(category = activeCategory) {
         .map(
           (post) => `
             <article class="post-card">
-              ${post.image ? `<div class="wam-banner"><img src="${escapeHtml(post.image)}" alt="WAM — 让思想，破纸而出。从模糊灵感，到自己的观点" /></div>` : ""}
               <div class="post-kicker"><span>${escapeHtml(post.category)}</span><time>${escapeHtml(post.date)}</time></div>
               <h2>${escapeHtml(post.title)}</h2>
               <p>${escapeHtml(post.summary)}</p>
@@ -206,9 +175,7 @@ export function renderArticle(slug) {
     <article class="article-shell">
       <a class="back-link" href="#blog">← Back to Blog</a>
       <p class="eyebrow">${escapeHtml(post.category)} · ${escapeHtml(post.date)}</p>
-      ${post.image ? `<div class="wam-banner"><img src="${escapeHtml(post.image)}" alt="WAM — Writing Agency Mentor" /></div>` : ""}
       <h1 tabindex="-1">${escapeHtml(post.title)}</h1>
-      ${post.slug === "wam" ? `<p class="wam-author">计算机系 李捷铭 · Project lead: Jieming Li</p>` : ""}
       ${post.links ? `<div class="inline-links">${post.links.map(linkMarkup).join("")}</div>` : ""}
       <p class="article-deck">${escapeHtml(post.summary)}</p>
       <div class="article-body">${post.body.map((paragraph) => `<p>${escapeHtml(paragraph)}</p>`).join("")}</div>

@@ -1,0 +1,236 @@
+# On-Policy Distillation：让学生在自己的生成轨迹上接受老师监督
+
+原文：[On-Policy Distillation](https://thinkingmachines.ai/blog/on-policy-distillation/)，Kevin Lu / Thinking Machines Lab，发布于 **2025-10-27**。
+
+核心做法是：**学生负责生成，老师负责评估这些生成 token 在对应前缀下的概率，然后更新学生。** 它让训练覆盖学生自己会遇到的状态，同时提供细粒度监督。
+
+这篇文章适合作为 OPD 的训练入门。下面先简述文章结果，再用公式与自构例子解释更新机制，最后讨论与机器人 Agent 的联系。
+
+## 1. 原文的主要实验结论
+
+文章研究数学推理与内部知识助手。数学实验中，SFT 初始化的 AIME’24 为 60%，后续 OPD 约 150 步达到 70%。文中报告的 9–30 倍成本优势依赖 FLOPs 核算和是否计入老师生成数据的成本；作为比较的 SFT-2M 成绩是外推值。正文介绍 32B 老师，但脚注明确实际 OPD 使用 Qwen3-8B，计算成本仍按 32B 核算。
+
+内部助手实验用旧模型指导已学习公司文档的学生。70% 文档混合训练后，内部 QA / IF-eval 为 36% / 79%；再蒸馏后为 41% / 83%。这是保留新知识、恢复部分行为能力的案例，尚不足以证明任意任务上的持续学习都能避免遗忘。
+
+原文采用 sampled-token reverse KL 信号，并令折扣为零，只使用当前 token 的信号更新。它没有把老师的完整词表分布全部传给学生。[原文方法与实验](https://thinkingmachines.ai/blog/on-policy-distillation/)
+
+## 2. 为什么让学生自己生成？
+
+先区分两个变量：**训练前缀从哪里来**，以及**在这些前缀上怎样计算损失**。
+
+在常见的老师轨迹 SFT 中，老师先写好回答，学生学习每个位置的下一个 token。训练中的前缀来自老师，而部署时前缀来自学生自己的输出。学生一旦偏离老师轨迹，就可能进入训练覆盖较弱的状态。
+
+GKD 把学生自己生成的序列纳入训练，并让老师对这些序列提供监督；它允许采用不同的分布距离。因此，on-policy 描述的是采样来源，不意味着只能采用 reverse KL。[GKD 原论文](https://arxiv.org/abs/2306.13649)
+
+用一个自构的代数例子理解：
+
+```text
+题目：2(x + 3) = 14，求 x。
+
+老师常用路径：两边除以 2 → x + 3 = 7 → x = 4。
+学生可能路径：展开 → 2x + 6 = 14 → 继续计算。
+```
+
+两条路径都可能正确。学生需要在自己选的展开路径上获得指导，而不必先完全复刻老师的表达顺序。
+
+如果学生写成 `2x + 3 = 14`，老师面对的是这个已经有错的前缀。此时问题更难：老师是否会指出错误、是否会顺着错误继续计算，取决于其条件分布。**在学生状态上给监督，并不保证每个错误都能被正确纠正。**
+
+## 3. 一轮训练有哪些数据？
+
+设 prompt 为 \(x\)，冻结老师为 \(q\)，当前用于采样的学生为 \(p_{old}\)。学生生成：
+
+\[
+y=(y_1,\ldots,y_T)\sim p_{old}(\cdot\mid x).
+\]
+
+每个位置的状态是同一个 prompt 加已经生成的前缀：
+
+\[
+s_t=(x,y_{<t}).
+\]
+
+然后保存两项：
+
+\[
+\ell_t^{old}=\log p_{old}(y_t\mid s_t),\qquad
+\ell_t^T=\log q(y_t\mid s_t).
+\]
+
+**老师评的是学生已经选择的 token，而非另外生成一条标准答案。** 老师与学生必须对同一前缀和同一个输出事件计算概率。
+
+```mermaid
+flowchart TD
+    X[采样 prompt] --> S[学生生成 response]
+    S --> P[保存学生 token 与旧 logprob]
+    P --> T[冻结老师对同一序列计算 logprob]
+    T --> A[逐 token 构造概率比信号]
+    A --> U[更新学生参数]
+    U --> S
+```
+
+固定整条序列后，老师可以用因果掩码计算各位置的条件概率。这与老师自回归生成答案的计算调度不同：前者已知后续输入 token，后者必须等待前一步生成结果。具体速度仍由批处理、长度和硬件决定。
+
+## 4. Reverse KL 的方向是什么意思？
+
+下面是针对固定状态 \(s\) 的数学解释。
+
+\[
+D_{KL}(p_\theta\|q)
+=\sum_a p_\theta(a\mid s)
+\log\frac{p_\theta(a\mid s)}{q(a\mid s)}.
+\]
+
+期望在学生分布下计算，所以学生赋予高概率、老师却认为不合理的输出会受到较强惩罚。MiniLLM 用 reverse KL 蒸馏生成模型，以减少学生对老师低概率区域的高估，并提出相应的 on-policy 优化方法。[MiniLLM 原论文](https://arxiv.org/abs/2306.08543)
+
+与之相比：
+
+\[
+D_{KL}(q\|p_\theta)
+=\mathbb E_{a\sim q}[\log q(a\mid s)-\log p_\theta(a\mid s)].
+\]
+
+老师固定时，第一项对学生没有梯度，优化等价于老师分布下的交叉熵。这个方向对学生漏掉老师的高概率输出更敏感。
+
+因此常说 forward KL 更偏向覆盖，reverse KL 更偏向集中到老师支持的模式。但“mode seeking”不能理解为一定只剩一种回答，更不能保证集中到的模式在任务上正确。
+
+### 4.1 一个数值例子
+
+假设某个状态只有两个候选 token，分布为：
+
+| 候选 | 学生概率 | 老师概率 | \(\log q-\log p\) |
+|---|---:|---:|---:|
+| A | 0.8 | 0.2 | −1.386 |
+| B | 0.2 | 0.8 | +1.386 |
+
+采到 A 时，更新信号倾向于降低其概率；采到 B 时，倾向于提高其概率。
+
+这衡量的是**相对老师而言的概率偏差**。它没有直接使用“A 是错误答案、B 是正确答案”的标签。如果老师的偏好恰好相反，优化也会跟着老师走。
+
+### 4.2 单个 token 的数值不是完整 KL
+
+采到一个 \(y_t\) 后，只得到：
+
+\[
+\widehat k_t=\log p(y_t\mid s_t)-\log q(y_t\mid s_t).
+\]
+
+它是 KL 的一个蒙特卡洛样本，可以小于零。完整 KL 是对所有候选按学生概率求期望，才保证非负。
+
+因此，画逐 token 热力图时，严格说显示的是采样 log-ratio，而不是每个位置都已经精确求出的词表 KL。
+
+## 5. 只有采样 token，怎样更新参数？
+
+以下推导说明固定状态下，为什么概率比可以作为策略梯度信号。假设老师固定且概率可定义：
+
+\[
+\nabla_\theta D_{KL}(p_\theta\|q)
+=\mathbb E_{a\sim p_\theta}
+\left[(\log p_\theta(a)-\log q(a)+1)
+\nabla_\theta\log p_\theta(a)\right].
+\]
+
+因为：
+
+\[
+\mathbb E_{a\sim p_\theta}[\nabla_\theta\log p_\theta(a)]=0,
+\]
+
+常数 1 的期望项消失，下降方向可以由下面的 advantage 给出：
+
+\[
+A_t=\operatorname{stopgrad}
+\left(\ell_t^T-\ell_t^{old}\right).
+\]
+
+再定义 importance ratio：
+
+\[
+\rho_t(\theta)=
+\exp\left(\log p_\theta(y_t\mid s_t)-\ell_t^{old}\right).
+\]
+
+一个解释机制的 surrogate loss 为：
+
+\[
+\mathcal L(\theta)=-\frac{1}{\sum_t m_t}
+\sum_t m_t\rho_t(\theta)A_t,
+\]
+
+\(m_t\) 表示该位置是否属于学生生成、应参与训练的 token。
+
+```python
+# 数学示意：省略分布式训练、截断、归一化与具体 API
+with no_grad():
+    tokens, old_logp = student_sample(prompts)
+    teacher_logp = teacher_score(prompts, tokens)
+    advantage = teacher_logp - old_logp
+
+new_logp = student_score_with_grad(prompts, tokens)
+ratio = exp(new_logp - old_logp)
+loss = -masked_mean(ratio * advantage, response_mask)
+loss.backward()
+optimizer.step()
+```
+
+这里关键是：老师概率、旧学生概率和 advantage 均为固定数据；新学生概率保留梯度。直接把缓存的 `old_logp - teacher_logp` 求平均后反向传播，不会产生所需学生梯度。
+
+### 5.1 固定状态的推导不等于完整序列梯度
+
+序列分布满足：
+
+\[
+D_{KL}(p_\theta(y\mid x)\|q(y\mid x))
+=\mathbb E_{y\sim p_\theta}\sum_t
+\log\frac{p_\theta(y_t\mid s_t)}{q(y_t\mid s_t)}.
+\]
+
+前面选哪个 token，会影响后续访问哪些状态。若严格优化这个序列目标，早期动作也应承担未来项的影响。只使用当前 token 的局部信号，忽略了这部分未来信用分配。
+
+所以，上面的固定状态推导解释了局部更新的合理性，但不能用它证明折扣为零时已经计算了完整序列 KL 的精确梯度。多次更新旧 rollout 时，状态分布也会逐渐过时；只修正单 token 比率并不能消除所有偏差。
+
+## 6. 它与 SFT、RL、过程奖励的区别
+
+| 方法 | 常见轨迹来源 | 监督内容 | 主要风险 |
+|---|---|---|---|
+| 老师轨迹 SFT | 老师或固定数据 | 模仿给定输出 | 部署前缀与训练前缀不一致 |
+| 结果奖励 RL | 当前策略 | 最终正确性或环境结果 | 长轨迹信用分配困难 |
+| 过程奖励 RL | 当前策略 | 中间步骤的评价 | 过程评估器可能有误差 |
+| OPD | 当前学生 | 老师在学生状态下的分布 | 老师局部偏好可能偏离真实任务目标 |
+
+这是一组常见配置的比较，不是对算法类别的硬性定义。RL 可以使用密集奖励，蒸馏也可以混合 on-policy 与 off-policy 数据。
+
+尤其需要区分：老师判断一个 token“在这个上下文中很自然”，与老师判断某一步“在逻辑或物理上正确”。错误前缀之后的错误结论，有时恰好是高度可预测的续写。因此，teacher logprob 不自动等于可靠的过程正确性分数。
+
+从目标上说，低 KL 保证的是分布接近。若教师本身犯错，或任务需要超出教师能力的探索，纯分布匹配没有提供独立的成功保证。可以研究加入环境奖励，但那已经是复合训练目标。
+
+## 7. 真正实施时需要核对的条件
+
+**概率接口。** 单纯让聊天模型返回一段评价，不等于获得指定 token 在指定前缀下的条件概率。实现 sampled-token OPD 需要能给学生序列评分的接口或本地教师模型。
+
+**词元与模板对齐。** 直接比较 logprob 通常要求共享兼容的词元空间，并明确 BOS、EOS、角色标签和思考标记。不同 tokenizer 的单 token 概率不能直接相减后当作同一个离散分布上的 KL。
+
+**初始能力与探索。** Softmax 对某个有用 token 给出非零概率，并不代表有限样本中能采到它。若学生几乎走不到有效策略区域，先用示范建立初始能力往往比期待局部蒸馏凭空发现路径更合理。
+
+**采样策略。** 温度和 top-p 会改变实际采样分布。训练时使用哪种 logprob、是否截断支持集，需要与目标和重要性修正保持一致。
+
+**评估。** 至少同时观察任务成功、老师匹配程度、输出长度、熵和遗忘。KL 降低却任务能力不涨，可能反映老师信号、状态覆盖或目标选择有问题。
+
+## 8. 当前代码与原博客不是同一实验快照
+
+[Tinker Cookbook 蒸馏目录](https://github.com/thinking-machines-lab/tinker-cookbook/tree/main/tinker_cookbook/recipes/distillation) 已使用 Qwen3.5-9B-Base / Qwen3.5-9B 的配方，不能把当前脚本的结果直接当作原博客 Qwen3 实验的逐项复现。
+
+当前 README 还提供多轮工具调用配方：学生调用工具、读取环境返回，再继续生成；训练掩码只覆盖学生生成的 token。环境返回和系统消息用作条件，不作为学生动作训练。这个实现说明 OPD 可以扩展到交互轨迹，但需要正确管理消息边界、环境状态和掩码。[当前配方说明](https://github.com/thinking-machines-lab/tinker-cookbook/tree/main/tinker_cookbook/recipes/distillation)
+
+本文只解释和核对方法，没有运行训练。复现时应固定仓库版本与模型版本，并重新核对教师评分权限、采样设置和成本。
+
+## 9. 与已有笔记和机器人研究怎样连接？
+
+已有 [Rethinking OPD I & II](Rethinking-OPD-I-II.md) 可接着读，关注教师信号能否被学生吸收；[Waypoint-OPD](Waypoint-OPD.md) 则进一步讨论如何利用教师训练过程中的变化。这两个链接是本地专题延伸，本文不重新验证其全部实验。
+
+与 [Agentic Robotics 受控研究](Agentic-Robotics-Controlled-Study.md) 相比，两者都重视学习者实际访问到的状态，但更新对象不同：OPD 更新模型参数，机器人 Coding Agent 的自改进循环主要编辑程序与技能。
+
+一个可以研究的结合方案是：让学生 Agent 实际执行工具调用，老师在相同交互历史上评价学生生成的决策 token，同时由环境提供独立任务结果。这样能够分别测量行为模仿与实际成功。
+
+对连续动作 VLA 则需要更谨慎。若动作由 diffusion 或 flow matching 生成，通常不能直接复用语言模型的单 token logprob 接口；需要重新定义动作分布匹配、可计算的训练目标与状态访问方式。
+
+由此得到的研究问题是：**怎样在学生真正访问的状态上提供可迁移监督，同时保留环境成功标准，避免把“更像老师”直接等同于“更会完成任务”？**

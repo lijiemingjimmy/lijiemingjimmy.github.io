@@ -1,0 +1,328 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>LiteReality-Agent：从真实房间扫描到可编辑、可交互的仿真场景 · Jieming Li</title><link rel="stylesheet" href="../assets/styles.css"><link rel="stylesheet" href="../assets/notes.css"><link rel="stylesheet" href="vendor/katex/katex.min.css"></head><body class="note-page"><header class="note-nav"><a href="../index.html#blog">← Blog</a><a href="../index.html">Jieming Li</a></header><main class="note-layout"><aside class="note-outline"><p class="eyebrow">On this page</p><nav aria-label="目录"><ol><li><a href="#section-0">1. 先理解它交付的东西</a></li><li><a href="#section-1">2. 输入条件很重要：它拿到的远不止一段视频</a></li><li><a href="#section-2">3. 整条流程：先把房间搭起来，再让 Agent 修细节</a></li><li><a href="#section-5">4. Agent 到底怎么“看”、怎么“改”？</a></li><li><a href="#section-10">5. 它怎么 train？主要是调用已有模型和工具</a></li><li><a href="#section-11">6. 质量检查：要分清检查器、模型评价和预算结束</a></li><li><a href="#section-15">7. 为什么导出 MuJoCo 比保存一个 GLB 复杂？</a></li><li><a href="#section-16">8. 实验结果到底说明了什么？</a></li><li><a href="#section-21">9. 和 AHa-3D、RoboSimStudio、GaP 怎么放在一起看？</a></li><li><a href="#section-22">10. 对 RUA / Dex-RUA 最有用的启发</a></li><li><a href="#section-27">11. 如果实际使用，先验收一个小场景</a></li></ol></nav></aside><article class="note-content" id="content"><p class="eyebrow">Research notebook · 研究笔记</p><h1 id="noteTitle">LiteReality-Agent：从真实房间扫描到可编辑、可交互的仿真场景</h1>
+<p>论文：<strong>LiteReality-Agent: An Agentic System for Interactable 3D Indoor Scene Reconstruction</strong>，arXiv:2610.01863，2026 年 10 月。</p>
+<p><a href="https://litereality.github.io/agent/">项目主页</a> · <a href="https://arxiv.org/html/2610.01863">论文</a> · <a href="https://litereality.github.io/agent/litereality-agent-post/">官方博客</a> · <a href="https://github.com/LiteReality/LiteReality-Agent">代码</a></p>
+<p>论文实验与当前仓库行为分别说明；没有在本地安装或运行重建管线。</p>
+<h2 id="section-0">1. 先理解它交付的东西</h2>
+<p>LiteReality-Agent 想把一个真实房间变成一个<strong>可以通过代码修改、能够拆分成独立物体、可以送入物理仿真器的场景</strong>。</p>
+<p>例如，扫描一间办公室后，系统不只希望渲染出相似的桌子和柜子，还希望知道：桌子是独立物体，杯子放在桌面上，柜门绕什么轴转动，椅子能否在桌下移动，以及这些部件分别用什么碰撞体参与仿真。</p>
+<p>它的核心表示是一个持续保存的场景程序 <code>Room.py</code>。Agent 通过修改程序改变场景，再渲染、检查和修正。生成的程序可以被重复执行，也可以继续接受“移走桌子”“更换墙面材质”“添加灯具”这样的编辑请求。</p>
+<p>这项工作的重点在于把现有感知、生成、建模和验证工具组织起来。它没有提出一个从 RGB 直接端到端训练出机器人策略的新模型，也没有通过机器人任务成功率证明整条训练链路已经成立。<a href="https://litereality.github.io/agent/">项目说明</a></p>
+<h2 id="section-1">2. 输入条件很重要：它拿到的远不止一段视频</h2>
+<p>系统使用带 LiDAR 的 iPhone / iPad 扫描，输入包括 RGB、深度、相机内参与位姿，以及 RoomPlan 提供的房间结构和物体布局。</p>
+<table>
+<thead>
+<tr>
+<th>输入</th>
+<th>帮助解决什么问题</th>
+<th>仍可能有什么误差</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RGB 图像</td>
+<td>外观、材质、物体类别和细节</td>
+<td>遮挡、反光、光照变化</td>
+</tr>
+<tr>
+<td>LiDAR 深度</td>
+<td>米制距离和几何约束</td>
+<td>缺失、噪声、细结构不完整</td>
+</tr>
+<tr>
+<td>相机内参与位姿</td>
+<td>将照片、几何和渲染对齐</td>
+<td>位姿和标定本身并非完美</td>
+</tr>
+<tr>
+<td>RoomPlan 布局</td>
+<td>墙面、开口、物体类别与包围盒</td>
+<td>尺寸、朝向、实例合并等错误</td>
+</tr>
+</tbody>
+</table>
+<p>所以，它与“给大模型若干 RGB 图，让它凭视觉写一个房间”不处在相同的信息条件下。原论文设置了 <code>+Scan</code> 基线，向比较方法提供同类扫描信息；判断收益时，优先看这些比较。</p>
+<p>对照 <a href="AHa-3D.html">AHa-3D 笔记</a>，可以把区别理解为：AHa-3D 从视频重建参考几何后进行程序化建模；LiteReality-Agent 一开始就具有 RGB-D 和 RoomPlan 的较强结构先验。后者仍需修复扫描结果，但不必从零推断所有空间关系。</p>
+<h2 id="section-2">3. 整条流程：先把房间搭起来，再让 Agent 修细节</h2>
+<figure class="diagram"><pre class="mermaid">flowchart TD
+    A[RGB-D、相机位姿、RoomPlan] --&gt; B[解析房间结构与物体包围盒]
+    B --&gt; C[布局关系图与约束修复]
+    C --&gt; D[生成物体参考图]
+    D --&gt; E[静态资产：图像到三维]
+    D --&gt; F[关节资产：程序化建模]
+    E --&gt; G[初始 Room.py 与物体资产]
+    F --&gt; G
+    G --&gt; H[Agent 观察、编辑、渲染对比]
+    H --&gt; I[碰撞、支撑与构建检查]
+    I --&gt; H
+    I --&gt; J[保存场景程序与导出结果]
+    J --&gt; K[Blender / glTF]
+    J --&gt; L[MuJoCo 场景]
+</pre><details><summary>Diagram source</summary><pre>flowchart TD
+    A[RGB-D、相机位姿、RoomPlan] --&gt; B[解析房间结构与物体包围盒]
+    B --&gt; C[布局关系图与约束修复]
+    C --&gt; D[生成物体参考图]
+    D --&gt; E[静态资产：图像到三维]
+    D --&gt; F[关节资产：程序化建模]
+    E --&gt; G[初始 Room.py 与物体资产]
+    F --&gt; G
+    G --&gt; H[Agent 观察、编辑、渲染对比]
+    H --&gt; I[碰撞、支撑与构建检查]
+    I --&gt; H
+    I --&gt; J[保存场景程序与导出结果]
+    J --&gt; K[Blender / glTF]
+    J --&gt; L[MuJoCo 场景]
+</pre></details></figure><p>这里要区分两个粒度：<strong>初始化阶段解决大结构和资产，authoring 阶段逐步补齐外观、布置和局部细节。</strong> 如果初始桌子尺寸就错了，后面的材质优化无法补救；如果几何已经合理，但缺少墙上插座和台面小物体，则更适合交给局部编辑工具处理。</p>
+<h3 id="section-3">3.1 为什么先修包围盒，而不是先生成漂亮资产？</h3>
+<p>物体包围盒会决定图像裁剪范围、生成资产的目标尺寸和最终放置位置。因此，一个错误包围盒可能同时污染三个环节。例如，把桌子和旁边的柜子合并成一个框，后续就可能生成错误的整体形状。</p>
+<p>布局阶段建立场景关系图，区分两类容易混淆的关系：</p>
+<ul>
+<li><strong>物理支撑</strong>：杯子由桌面支撑，椅子由地面支撑。</li>
+<li><strong>功能分组</strong>：桌子和椅子组成工作区域，调整布局时可以一起移动。</li>
+</ul>
+<p>椅子属于桌子的功能组，不代表桌子支撑椅子。椅子收在桌下，两个包围盒发生重叠，也不必然意味着实际网格相交。关系图需要允许这些合理情况。</p>
+<p>系统先尝试确定性的几何修复，包括贴墙、对齐角落、分离冲突物体和小幅调整尺寸。仍有歧义时，才让视觉 Agent 参考照片提出修改。候选修改必须通过约束验证，不能任意移动家具，只为了让碰撞统计变好。</p>
+<p>附件提到的约束包括累计水平位移不超过 0.6 m、竖直位移不超过 0.08 m，以及主要家具的尺寸变化限制。这些是允许的修复边界，<strong>不是扫描精度，也不是实际平均改动量</strong>。</p>
+<p>论文保存的十个场景中，布局检查错误从 30 降到 0；107 个输入框里，29 个移动、4 个改变尺寸。但这些案例全部由确定性搜索解决，因此它们不能单独证明视觉 Agent 的额外贡献。这里的零错误表示通过指定检查规则，也不能直接解释为恢复了真实布局。<a href="https://arxiv.org/html/2610.01863">论文附录 B.1–B.2</a></p>
+<h3 id="section-4">3.2 物体有两条重建路线</h3>
+<p><strong>第一条是图像到三维。</strong> 对沙发等外观复杂、主要作为静态几何使用的物体，系统从扫描图像中提取参考，再利用生成模型构造资产。附件和论文介绍了 TRELLIS.2 路线。</p>
+<p><strong>第二条是程序化建模。</strong> 对柜门、抽屉等需要明确关节和部件关系的物体，借助 Articraft 方向的工具生成 <code>object.py</code>，用程序表达部件、关节轴、转轴位置和运动范围。</p>
+<p>两条路线各有目的。图像到三维适合复杂形状与外观；程序化表示便于拆开柜体和柜门，也方便修改尺寸与关节。并不是所有物体都由同一种生成器处理。</p>
+<p>系统会生成更干净的参考图，减少遮挡和背景对资产生成的干扰。但这也引入一个风险：清理和补全可能添加原始观测里没有的结构。<strong>生成参考图是建模辅助，原始扫描照片才是核对保真度的依据。</strong> 隐藏部件的形状仍然是估计。</p>
+<p>资产检查会寻找异常比例、碎片和背景融入网格等问题。有限重试能够改善结果，却不能保证所有失败消失；达到重试上限后，仍可能保留原资产并报告未解决问题。</p>
+<h2 id="section-5">4. Agent 到底怎么“看”、怎么“改”？</h2>
+<p><code>Room.py</code> 是房间层面的构建与放置程序，<code>object.py</code> 是某个程序化资产的生成配方。Agent 不必一次性重新描述整间房，而是围绕这些持久文件进行局部修改。</p>
+<p>它的工作循环可以用一张图表示：</p>
+<figure class="diagram"><pre class="mermaid">flowchart LR
+    A[选择当前问题对应的观测] --&gt; B[编辑 Room.py 或资产程序]
+    B --&gt; C[重新构建场景]
+    C --&gt; D[同视角渲染与真实照片对照]
+    D --&gt; E[几何检查及视觉反馈]
+    E --&gt; A
+    E --&gt; F[保存已验证版本和未解决项]
+</pre><details><summary>Diagram source</summary><pre>flowchart LR
+    A[选择当前问题对应的观测] --&gt; B[编辑 Room.py 或资产程序]
+    B --&gt; C[重新构建场景]
+    C --&gt; D[同视角渲染与真实照片对照]
+    D --&gt; E[几何检查及视觉反馈]
+    E --&gt; A
+    E --&gt; F[保存已验证版本和未解决项]
+</pre></details></figure><h3 id="section-6">4.1 选择视角，减少无关信息</h3>
+<p>工具支持房间、墙面、物体等查询范围。修墙面时不必把全部照片交给 Agent；修桌子时可以优先查看目标可见、遮挡较少的照片。</p>
+<p>这相当于把“看哪里”也做成一个工具，而不只是让 Agent 在长上下文里反复阅读整段扫描。对重建任务来说，观察选择直接影响误差能否被发现。</p>
+<h3 id="section-7">4.2 同视角比较，让反馈可解释</h3>
+<p>系统按记录的相机参数渲染当前场景，再与对应原始照片配对。如果真实桌沿在画面中更靠左，Agent 就可以围绕桌子的位置、大小或朝向检查问题。</p>
+<p>相机对齐减少了一种常见混淆：图片看起来不一样，究竟是几何错了，还是只因为两张图的视角不同？当然，输入位姿存在误差时，比较也会继承这些误差。</p>
+<h3 id="section-8">4.3 墙面拼接提供米制参考</h3>
+<p>系统将多个观测投影到检测到的墙面平面，得到带米制网格的墙面参考。这样，白板、插座或挂件的位置可以用离地高度和沿墙距离描述。</p>
+<p>它不是任意拼接出一张好看的全景图。墙面平面本身提供了几何坐标，未被观测的区域也需要保留覆盖标记。突出墙面的灯具和家具会受到平面投影扭曲，仍需查看原始照片。</p>
+<h3 id="section-9">4.4 为什么按模块修改？</h3>
+<p>附件介绍的 authoring 顺序覆盖墙面材质、固定装置与照明、小物体、程序化资产细化。这个组织方式有一个实际好处：先确定大结构，再处理依赖大结构的小物体。</p>
+<p>例如，台面高度尚未稳定时就放好杯子，之后调整台面会导致杯子悬空。显式保存 <code>rests_on</code> 和 <code>attached_to</code>，可以让这种依赖关系被检查，而不只隐含在几何坐标里。</p>
+<h2 id="section-10">5. 它怎么 train？主要是调用已有模型和工具</h2>
+<p>这项工作的“学习”容易与机器人训练混在一起。更准确的拆分如下：</p>
+<table>
+<thead>
+<tr>
+<th>层次</th>
+<th>在系统中做什么</th>
+<th>本文能据此声称什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>已有感知和生成模型</td>
+<td>检测、生成参考图、生成三维资产</td>
+<td>复用已有能力</td>
+</tr>
+<tr>
+<td>Coding Agent</td>
+<td>读观测、调用工具、修改场景程序</td>
+<td>推理时迭代建模</td>
+</tr>
+<tr>
+<td>几何与物理检查器</td>
+<td>给出碰撞、支撑等反馈</td>
+<td>验证部分约束</td>
+</tr>
+<tr>
+<td>机器人策略</td>
+<td>将来可在导出场景中训练或评测</td>
+<td>需要另外设计实验</td>
+</tr>
+</tbody>
+</table>
+<p>Agent 多轮修改房间，不等于在这些房间上做梯度更新；反复生成并检查场景，也不等于完成了机器人强化学习。</p>
+<p>如果借用优化的语言，可以把它理解为对场景程序进行约束搜索：在保留扫描证据的前提下，改善视觉一致性和几何可用性。但论文的实际流程不是一个统一可微损失下的端到端优化器，不应自行补出一个训练目标并当作原文方法。</p>
+<p>这里值得学习的是工具和反馈接口：Agent 可以提出复杂编辑，确定性工具负责构建和检查，持久程序承接每次修改。至于它是否能随着处理房间数量增加而形成可迁移的建模能力，需要额外的训练或经验复用机制，不能从多轮修复直接推出。</p>
+<h2 id="section-11">6. 质量检查：要分清检查器、模型评价和预算结束</h2>
+<h3 id="section-12">6.1 支撑检查与碰撞检查是不同问题</h3>
+<p>没有穿模不代表没有悬空；物体靠近桌面，也不代表其他部位没有穿入墙壁。因此需要分开检查。</p>
+<p>支撑声明回答“这个物体应该由什么承载”，几何检查再判断该声明是否成立。固定在墙上的插座属于 attachment，不能按自由物体的重力支撑规则处理。</p>
+<p>碰撞方面，仅看包围盒很容易误判桌下的椅子。系统需要进一步查看实际网格相交，再用近似几何计算修正方向。对于无法在有限改动内解决的问题，应保留报告。</p>
+<h3 id="section-13">6.2 Critic 的评分仍是一种模型判断</h3>
+<p>让工具拥有固定的评价提示和检查清单，有助于避免编辑 Agent 每轮自行更换验收标准。但一个模型说场景相似，仍不能替代真实尺寸、物体质量或关节摩擦的测量。</p>
+<p>当前 README 还说明：模型驱动的 <code>--quality-pass</code> 是额外可选流程，其输出不被下游读取。因此，不能把论文中的“视觉评审”描述直接扩展为“当前仓库所有导出都强制通过独立 Critic”。应分别记录确定性检查结果、模型评审结果和实际导出是否成功。<a href="https://github.com/LiteReality/LiteReality-Agent#run">当前 README</a></p>
+<h3 id="section-14">6.3 用完预算不等于质量合格</h3>
+<p>系统限制轮数和工具调用，后段预算用于收尾、保存和构建。这能够避免一直探索却没有可交付文件。</p>
+<p>然而，预算耗尽只描述运行终止条件。一次运行结束后，还需回答：保存的是哪个版本，构建是否成功，哪些检查通过，哪些问题仍未解决。把这些状态合并成一个“done”会掩盖失败。</p>
+<h2 id="section-15">7. 为什么导出 MuJoCo 比保存一个 GLB 复杂？</h2>
+<p>渲染需要几何和材质，接触仿真还需要物体划分、碰撞几何、质量、惯量和约束关系。</p>
+<p>例如，一张桌子如果用一个整体凸包作为碰撞体，桌面下面的空隙也可能被填满。视觉上椅子能放进去，物理上却会被弹开。柜子也类似：如果内部空间被碰撞体封死，就无法执行“把物体放进柜子”。</p>
+<p>因此，要保留各部件并适当分解碰撞体；柜门需要独立的转动关节，抽屉需要滑动关节，墙面固定装置需要保持固定，普通可移动物体则需要自由运动能力。</p>
+<p>物体的资产坐标和房间中的放置坐标也必须一致。修改大小后，只更新视觉模型而不更新碰撞体、惯量或关节位置，会得到“看着正确，碰撞发生在别处”的场景。</p>
+<p>仓库提供逐物体物理记录，并对缺少记录的新建物体使用导出时估计。这样的回退有明确用途，但应查看 <code>export_report.json</code>，不能默认所有物体的物理信息具有相同来源和质量。<a href="https://github.com/LiteReality/LiteReality-Agent/blob/main/doc/Sim-Ready-intergration/Mujoco.md">MuJoCo 集成文档</a></p>
+<p><strong>物理参数的主要限制仍是缺少实测真值。</strong> 附件中提到的质量、摩擦和惯量，部分来自类别或材料先验，部分来自几何估算。导出成功、短时下落正常、关节能转动，都不能单独证明其动态行为等同于真实物体。</p>
+<p>对于机器人训练，需要分别验证：</p>
+<ol>
+<li>场景能否被仿真器加载。</li>
+<li>是否存在明显初始穿透、悬空和数值不稳定。</li>
+<li>目标任务的接触行为是否可信。</li>
+<li>在该场景中学习的策略是否改善真实任务表现。</li>
+</ol>
+<p>前一项通过，不会自动使后一项成立。</p>
+<h2 id="section-16">8. 实验结果到底说明了什么？</h2>
+<h3 id="section-17">8.1 外观更接近输入场景，但不是新视角泛化实验</h3>
+<p>附件给出的主要结果如下，数值与论文表格对应：</p>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th style="text-align:right">GPT-6 + Scan</th>
+<th style="text-align:right">LiteReality-Agent</th>
+<th>方向</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>PSNR</td>
+<td style="text-align:right">12.967</td>
+<td style="text-align:right">14.129</td>
+<td>越高越好</td>
+</tr>
+<tr>
+<td>LPIPS</td>
+<td style="text-align:right">0.6250</td>
+<td style="text-align:right">0.5392</td>
+<td>越低越好</td>
+</tr>
+<tr>
+<td>深度 MAE</td>
+<td style="text-align:right">13.33 cm</td>
+<td style="text-align:right">10.50 cm</td>
+<td>越低越好</td>
+</tr>
+<tr>
+<td>家具底部近接触</td>
+<td style="text-align:right">58 / 92，63.0%</td>
+<td style="text-align:right">86 / 86，100%</td>
+<td>需结合定义</td>
+</tr>
+<tr>
+<td>家具间表面相交计数</td>
+<td style="text-align:right">24</td>
+<td style="text-align:right">0</td>
+<td>需结合统计范围</td>
+</tr>
+<tr>
+<td>人评整体相似度</td>
+<td style="text-align:right">3.00 / 5</td>
+<td style="text-align:right">4.54 / 5</td>
+<td>越高越好</td>
+</tr>
+</tbody>
+</table>
+<p>评测包含十个场景、620 个采集视角，深度指标使用其中 611 个具有共同有效深度像素的帧。主要比较发生在采集视角，因此结果支持对输入场景的重建能力，不能直接当作 held-out 新视角性能。</p>
+<p>还要考虑渲染条件：比较使用共享照明设置，但这些照明并非独立测量得到的真实光照。PSNR 和 LPIPS 同时受到几何、材质和照明影响，不能把提高的分数全部解释成几何更准确。<a href="https://arxiv.org/html/2610.01863">论文实验及附录 C–E</a></p>
+<h3 id="section-18">8.2 “100% 支撑率”容易被读得过强</h3>
+<p>论文的评测指标检查：一个家具是否至少有一个底部采样点，距外部支撑表面不超过 1 cm。</p>
+<p>这是一项<strong>底部近接触指标</strong>。它并不要求每条桌腿都接触地面，也不验证重心是否位于稳定支撑区域，更不测量受力后的行为。它和 authoring 阶段的支撑验收规则也不是同一个检查器。</p>
+<p>此外，各方法输出的家具数量不同，分母分别为 92 和 86。因此，这不是对同一组对象逐一配对的成功率比较。结合对象覆盖情况解释，比只比较百分比更可靠。</p>
+<p>“零相交”同样只对应论文规定的家具间网格检测范围，不能读成整个场景内所有部件、墙体和隐藏结构都不存在穿透。</p>
+<h3 id="section-19">8.3 人类评价支持相似度优势，但样本不大</h3>
+<p>论文纳入 13 份完成且身份映射可核对的提交，形成 65 个参与者—场景评价。平均分说明参与者更认可最终场景与参考的相似程度。</p>
+<p>这有助于补充图像指标，却没有测量机器人能否可靠开门、抓取或放置。人类看起来合理和机器人执行时物理可信，仍是两组实验。</p>
+<h3 id="section-20">8.4 什么还没有证明？</h3>
+<p>目前材料支持：系统能够生成结构化场景、改善视觉与若干几何指标、提供可编辑资产及仿真导出。</p>
+<p>它还不足以证明：</p>
+<ul>
+<li>质量、摩擦和关节阻尼被准确识别。</li>
+<li>任意房间和任意家具都能自动重建成功。</li>
+<li>增加该系统生成的场景，会稳定提升机器人训练性能。</li>
+<li>仿真策略具有相应的真实部署成功率。</li>
+<li>多轮 Agent 修复比确定性修复在所有环节都更有效。</li>
+</ul>
+<p>这些边界不削弱“场景构建工具”的价值，但会影响研究者如何设计下一步实验。</p>
+<h2 id="section-21">9. 和 AHa-3D、RoboSimStudio、GaP 怎么放在一起看？</h2>
+<p>下面是结合已有笔记做的研究定位，不是这些工作的统一基准排名。</p>
+<table>
+<thead>
+<tr>
+<th>工作</th>
+<th>主要可编辑对象</th>
+<th>关键反馈</th>
+<th>与机器人任务的关系</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>LiteReality-Agent</td>
+<td>房间程序和物体资产</td>
+<td>扫描对照、布局、碰撞、支撑</td>
+<td>建造真实场景对应的仿真环境</td>
+</tr>
+<tr>
+<td>AHa-3D</td>
+<td>程序化室内场景</td>
+<td>视频重建参考、渲染和几何检查</td>
+<td>从视频生成可继续编辑的场景</td>
+</tr>
+<tr>
+<td>RoboSimStudio</td>
+<td>多物理仿真场景与任务设置</td>
+<td>仿真反馈及真实失败现象</td>
+<td>围绕交互任务修改仿真环境</td>
+</tr>
+<tr>
+<td>GaP</td>
+<td>图结构控制程序</td>
+<td>执行和仿真中的任务反馈</td>
+<td>生成与修复完成任务的策略</td>
+</tr>
+</tbody>
+</table>
+<p>相关笔记：<a href="AHa-3D.html">AHa-3D</a>、<a href="RoboSimStudio.html">RoboSimStudio</a>、<a href="GaP.html">GaP</a>。</p>
+<p>这里尤其不要混淆两种图：LiteReality-Agent 的关系图描述物体如何摆放、由谁支撑；GaP 的策略图描述执行过程如何流转。前者可以为后者提供环境语义，但二者不是同一种控制表示。</p>
+<p>也不要把“能够组合”误写成“已经集成”。理论上，可以先用 LiteReality-Agent 建环境，再用策略生成方法完成任务，并用仿真反馈修复环境或策略。要成为有效系统，还需要定义接口、任务状态、错误归因和共同评测。</p>
+<h2 id="section-22">10. 对 RUA / Dex-RUA 最有用的启发</h2>
+<p>以下是研究建议，不是论文已经验证的结果。</p>
+<h3 id="section-23">10.1 把环境做成能追踪来源的资产</h3>
+<p>可执行场景程序允许保存一个基准版本，再构造有记录的变体：改变物体摆放、增加遮挡、更换材质、改变门的初始角度。</p>
+<p>但每种改变应具有明确语义。例如，替换目标物体与只改变其位置是两种不同干预。程序化编辑方便实现它们，也更需要严格记录到底修改了什么。</p>
+<h3 id="section-24">10.2 不要将支撑关系直接当作任务真值</h3>
+<p><code>rests_on</code> 可以描述杯子放在桌上，却不能单独定义“把杯子安全放进柜子”已经完成。任务还涉及目标容器、物体姿态、是否稳定、是否释放以及是否满足其他条件。</p>
+<p>要把场景转成 Agent benchmark，还需单独补齐动作接口、任务定义、成功判定、重置机制、失败状态和可复现的初始分布。</p>
+<h3 id="section-25">10.3 Dex-RUA 更应关注接触几何，而不只关注外观</h3>
+<p>对灵巧操作而言，杯柄间隙、抽屉滑轨、接触面的曲率和摩擦，都可能决定任务是否可行。一个整体相似度高的场景，仍可能在这些局部属性上失真。</p>
+<p>可以先选一个柜门或抽屉做验证，测量真实关节轴、运动范围和开启阻力，再比较仿真中的对应行为。这种局部验证比直接假设整间房的物理属性可信，更能回答模型是否适合接触密集任务。</p>
+<h3 id="section-26">10.4 真正值得做的消融是“环境质量是否改变策略表现”</h3>
+<p>例如固定策略、训练预算和任务初始分布，比较：</p>
+<ol>
+<li>原始扫描布局与修复后的布局。</li>
+<li>单整体凸包与合理分解的碰撞体。</li>
+<li>类别先验物理参数与实测参数。</li>
+<li>只有外观优化与同时修复接触几何。</li>
+</ol>
+<p>记录初始化失败、仿真成功、真实成功和两者差距。这样才能判断哪些重建改进真正影响机器人，而不仅是让场景渲染得更像。</p>
+<h2 id="section-27">11. 如果实际使用，先验收一个小场景</h2>
+<p>当前官方仓库提供示例扫描。完成依赖配置后，可以从一个场景开始，而不必先自行采集大量数据：</p>
+<pre><code class="language-bash">git clone https://github.com/LiteReality/example-scans.git
+uv run litereality run example-scans/&lt;scan&gt;
+</code></pre>
+<p>完成重建后，仿真导出的官方入口为：</p>
+<pre><code class="language-bash">uv run litereality stage simulate run/&lt;scan&gt;
+uv run litereality stage simulate run/&lt;scan&gt; --shake
+</code></pre>
+<p>这些是文档中的操作示例，本次没有执行。完整运行还涉及 Blender、Agent CLI、图像生成服务及三维生成模型的 GPU 后端；Mac 可作为前端，不代表整个流程没有 GPU 或 API 成本。<a href="https://github.com/LiteReality/LiteReality-Agent#how-to-use">安装与运行说明</a></p>
+<p>验收时，优先检查目标任务必需的内容：场景尺寸、目标物体覆盖、碰撞空隙、关节轴、支撑关系、导出报告中的估计回退，以及物体在重力和接触下是否稳定。</p>
+<p>LiteReality-Agent 最值得借鉴的部分，是<strong>让场景成为可执行、可检查、可继续修改的程序</strong>。它把真实观测与仿真资产连接起来；下一步研究的关键，是用任务实验验证这种连接在多大程度上保留了真实交互规律。</p>
+<footer><a href="../index.html#blog">← Back to Blog</a></footer></article></main><script src="vendor/mermaid.min.js"></script><script>mermaid.initialize({startOnLoad:true,securityLevel:"strict",theme:"neutral",fontFamily:"system-ui",flowchart:{htmlLabels:false}});</script></body></html>

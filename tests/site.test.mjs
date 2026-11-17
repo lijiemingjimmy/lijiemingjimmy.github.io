@@ -16,12 +16,13 @@ test("normalizes top-level and blog article routes", () => {
   assert.deepEqual(normalizeRoute("#unknown"), { view: "main", slug: null });
 });
 
-test("filters blog posts without mutating the source collection", () => {
-  const original = [...siteData.posts];
-  const research = getFilteredPosts(siteData.posts, "Writing & Education");
-  assert.ok(research.length > 0);
-  assert.ok(research.every((post) => post.category === "Writing & Education"));
-  assert.deepEqual(siteData.posts, original);
+test("keeps Blog focused on Research Notes", async () => {
+  assert.deepEqual(siteData.posts, []);
+  assert.deepEqual(getFilteredPosts(siteData.posts, "All"), []);
+  const html = await read("index.html");
+  assert.match(html, /<h1[^>]*>Research Notes<\/h1>/);
+  assert.match(html, /id=["']notesList["']/);
+  assert.doesNotMatch(html, /blogCategories|blogList|blog\/wam/i);
 });
 
 test("publishes accurate research and news metadata", () => {
@@ -49,7 +50,7 @@ test("HTML contains four navigable views and comprehensive profile content", asy
   assert.match(html, /A strangely balanced athlete/);
   assert.match(html, /best ultimate player on the badminton team/i);
   assert.match(html, /id=["']researchList["']/);
-  assert.match(html, /id=["']blogList["']/);
+  assert.match(html, /id=["']notesList["']/);
   assert.doesNotMatch(html, /hello@example\.com/);
 });
 
@@ -80,4 +81,5 @@ test("script exposes research, blog and routing renderers", async () => {
   assert.match(script, /document\.title\s*=/);
   assert.match(script, /aria-current/);
   assert.match(script, /No posts in this category yet/);
+  assert.doesNotMatch(script, /WAM 写作智能体|writing-agent-rust|wam-card/i);
 });

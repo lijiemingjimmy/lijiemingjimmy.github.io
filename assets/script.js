@@ -15,6 +15,20 @@ export const siteData = {
   ],
   "research": [
     {
+      "id": "iclworld",
+      "date": "2026",
+      "status": "Submitted to CVPR 2027 · ICLWorld",
+      "title": "ICLWorld: Benchmarking In-Context Learning of Agents from Digital to Physical Worlds",
+      "authors": "Qingle Liu, Jieming Li, Pei-lin Li, Shenghan Zheng, Ruize Yang, Sunqi Fan, Deyao Hong, Huan-ang Gao, Meng-Hao Guo, Shuojin Yang",
+      "summary": "ICLWorld evaluates how agents learn new rules from text and video across computer use and robot manipulation. It brings together 160 tasks, 30 environments, and 630 demonstration videos through UIverse, a shared interaction harness. Three rule versions per task and tests on new instances and unseen environments reveal gaps between recognizing a rule and successfully acting on it.",
+      "image": "assets/images/iclworld-overview.png",
+      "imageAlt": "ICLWorld overview: three rule versions, text and video demonstrations, the UIverse harness, and evaluation across digital and physical worlds",
+      "links": [
+        { "label": "OpenReview", "href": "https://openreview.net/forum?id=YMMfCZhl0G" },
+        { "label": "PDF", "href": "https://openreview.net/attachment?id=YMMfCZhl0G&name=pdf" }
+      ]
+    },
+    {
       "id": "rethinking-robot-agent-evaluation",
       "date": "2026",
       "status": "OpenRUA · RUA-Eval",

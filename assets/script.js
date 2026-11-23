@@ -31,9 +31,9 @@ export const siteData = {
     {
       "id": "rethinking-robot-agent-evaluation",
       "date": "2026",
-      "status": "OpenRUA · RUA-Eval",
+      "status": "2026 · RUA-Eval",
       "title": "Rethinking Robot Agent Evaluation",
-      "authors": "OpenRUA team",
+      "authors": "Jieming Li",
       "summary": "Examining how execution budgets, verifier feedback, and task-specific skill development affect robot agent evaluation, with a focus on comparable results and transfer beyond the development task.",
       "image": "assets/images/rethinking-evaluation.png",
       "imageAlt": "Rethinking evaluation: unfair budget, verifier leak, and task overfitting",

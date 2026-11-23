@@ -26,6 +26,11 @@ test("keeps Blog focused on Research Notes", async () => {
 });
 
 test("publishes accurate research and news metadata", () => {
+  const rethinking = siteData.research.find((item) => item.id === "rethinking-robot-agent-evaluation");
+  assert.ok(rethinking);
+  assert.equal(rethinking.authors, "Jieming Li");
+  assert.match(rethinking.status, /RUA-Eval/);
+
   const roboRetry = siteData.research.find((item) => item.id === "roboretry");
   assert.ok(roboRetry);
   assert.match(roboRetry.status, /CVPR 2026.*3D-LLM\/VLA/i);
@@ -46,7 +51,7 @@ test("HTML contains four navigable views and comprehensive profile content", asy
   for (const view of ["main", "info", "research", "blog", "article"]) {
     assert.match(html, new RegExp(`data-view=["']${view}["']`));
   }
-  assert.match(html, /Department of Electronic Engineering/);
+  assert.match(html, /Embodied Agents &amp; Physical Intelligence/);
   assert.match(html, /A strangely balanced athlete/);
   assert.match(html, /best ultimate player on the badminton team/i);
   assert.match(html, /id=["']researchList["']/);
@@ -62,6 +67,8 @@ test("homepage uses the requested Jimmy branding and portrait", async () => {
   assert.doesNotMatch(html, /class=["']brand["']/);
   assert.doesNotMatch(html, /Learning how the world changes/);
   assert.doesNotMatch(html, /Jieming\.li · Embodied intelligence/);
+  assert.match(html, /Current Research Directions/);
+  assert.doesNotMatch(html, /Prof\. Ning Ding|OpenRUA team|Research group/);
 });
 
 test("CSS provides view routing, publication rows, responsiveness and accessibility", async () => {
